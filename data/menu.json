@@ -1,0 +1,142 @@
+[
+  {
+    "name": "Espresso",
+    "description": "A bold, concentrated shot of pure coffee energy.",
+    "moods": [
+      "tired",
+      "exhausted",
+      "sleepy",
+      "need focus",
+      "busy",
+      "deadline"
+    ],
+    "caffeine_level": "high",
+    "temperature": "hot",
+    "price": 3.5
+  },
+  {
+    "name": "Caramel Macchiato",
+    "description": "Smooth espresso with vanilla and caramel drizzle. A warm hug in a cup.",
+    "moods": [
+      "stressed",
+      "anxious",
+      "overwhelmed",
+      "nervous"
+    ],
+    "caffeine_level": "medium",
+    "temperature": "either",
+    "price": 5.5
+  },
+  {
+    "name": "Hot Chocolate",
+    "description": "Rich, creamy cocoa topped with marshmallows. Pure comfort.",
+    "moods": [
+      "sad",
+      "down",
+      "lonely",
+      "cold",
+      "homesick",
+      "blue"
+    ],
+    "caffeine_level": "none",
+    "temperature": "hot",
+    "price": 4.5
+  },
+  {
+    "name": "Matcha Latte",
+    "description": "Earthy green tea with steamed milk. Calming and grounding.",
+    "moods": [
+      "frustrated",
+      "angry",
+      "irritated",
+      "tense",
+      "mad"
+    ],
+    "caffeine_level": "medium",
+    "temperature": "either",
+    "price": 5.0
+  },
+  {
+    "name": "Iced Lemon Tea",
+    "description": "Zesty, refreshing, and invigorating. A sunshine pick-me-up.",
+    "moods": [
+      "bored",
+      "unmotivated",
+      "lazy",
+      "sluggish",
+      "blah"
+    ],
+    "caffeine_level": "low",
+    "temperature": "iced",
+    "price": 4.0
+  },
+  {
+    "name": "Chai Latte",
+    "description": "Spiced black tea with frothy milk. Warm and nostalgic.",
+    "moods": [
+      "nostalgic",
+      "cozy",
+      "chilly",
+      "reflective",
+      "peaceful"
+    ],
+    "caffeine_level": "medium",
+    "temperature": "hot",
+    "price": 4.75
+  },
+  {
+    "name": "Cold Brew",
+    "description": "Slow-steeped, smooth, and naturally sweet. Cool confidence in a cup.",
+    "moods": [
+      "confident",
+      "focused",
+      "determined",
+      "productive",
+      "sharp"
+    ],
+    "caffeine_level": "high",
+    "temperature": "iced",
+    "price": 4.5
+  },
+  {
+    "name": "Rose Latte",
+    "description": "Delicate floral notes with silky milk. A little luxury for your day.",
+    "moods": [
+      "happy",
+      "celebrating",
+      "loved",
+      "romantic",
+      "grateful"
+    ],
+    "caffeine_level": "low",
+    "temperature": "either",
+    "price": 5.25
+  },
+  {
+    "name": "Golden Turmeric Latte",
+    "description": "Warming spices with anti-inflammatory goodness. Self-care in a sip.",
+    "moods": [
+      "sick",
+      "under the weather",
+      "tired body",
+      "achy"
+    ],
+    "caffeine_level": "none",
+    "temperature": "hot",
+    "price": 5.0
+  },
+  {
+    "name": "Bubble Milk Tea",
+    "description": "Chewy tapioca pearls in creamy milk tea. Pure fun and indulgence!",
+    "moods": [
+      "playful",
+      "excited",
+      "youthful",
+      "fun",
+      "cheerful"
+    ],
+    "caffeine_level": "medium",
+    "temperature": "iced",
+    "price": 5.5
+  }
+]
