@@ -40,6 +40,13 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
 
     print(f"[{user_id}] {text}")
 
+    # Check if user is in an admin wizard first
+    wizard_reply = engine.handle_admin_wizard(user_id, text)
+    if wizard_reply:
+        await send_message(client, chat_id, wizard_reply)
+        print(f"  -> Wizard reply ({len(wizard_reply)} chars)")
+        return
+
     # Route commands
     lower = text.lower()
     if lower == "/start":
@@ -48,9 +55,9 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
         reply = engine.admin_help(user_id) if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
     elif lower == "/admin_menu":
         reply = engine.admin_view_menu() if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
-    elif lower.startswith("/admin_add "):
+    elif lower == "/admin_add":
         if engine.is_owner(user_id):
-            reply = engine.admin_add_drink(text[len("/admin_add "):].strip())
+            reply = engine.admin_start_add_wizard(user_id)
         else:
             reply = "Access denied. This command is for the cafe owner only."
     elif lower.startswith("/admin_remove "):
@@ -60,6 +67,8 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             reply = "Access denied. This command is for the cafe owner only."
     elif lower == "/admin_reload":
         reply = engine.admin_reload_menu() if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
+    elif lower == "/admin_cancel":
+        reply = engine.admin_cancel_wizard(user_id) if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
     else:
         reply = await engine.chat(user_id, text)
 

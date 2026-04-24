@@ -104,6 +104,12 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     if not text:
         return JSONResponse({"ok": True})
 
+    # Check if user is in an admin wizard first
+    wizard_reply = engine.handle_admin_wizard(user_id, text)
+    if wizard_reply:
+        asyncio.create_task(_send_telegram_message(chat_id, wizard_reply))
+        return JSONResponse({"ok": True})
+
     # Handle /start
     if text.lower() == "/start":
         reply = await engine.greet(user_id)
@@ -121,10 +127,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         else:
             reply = "Access denied. This command is for the cafe owner only."
 
-    elif text.lower().startswith("/admin_add "):
+    elif text.lower() == "/admin_add":
         if engine.is_owner(user_id):
-            json_str = text[len("/admin_add "):].strip()
-            reply = engine.admin_add_drink(json_str)
+            reply = engine.admin_start_add_wizard(user_id)
         else:
             reply = "Access denied. This command is for the cafe owner only."
 
@@ -138,6 +143,12 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     elif text.lower() == "/admin_reload":
         if engine.is_owner(user_id):
             reply = engine.admin_reload_menu()
+        else:
+            reply = "Access denied. This command is for the cafe owner only."
+
+    elif text.lower() == "/admin_cancel":
+        if engine.is_owner(user_id):
+            reply = engine.admin_cancel_wizard(user_id)
         else:
             reply = "Access denied. This command is for the cafe owner only."
 

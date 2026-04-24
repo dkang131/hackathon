@@ -30,3 +30,6 @@ class UserState:
     user_name: str | None = None
     lang_code: str = "en"
     lang_name: str = "English"
+    # Admin wizard state
+    admin_wizard: str | None = None  # e.g. "add_drink"
+    admin_wizard_data: dict = field(default_factory=dict)

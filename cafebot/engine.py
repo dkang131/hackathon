@@ -286,12 +286,12 @@ class CafeBotEngine:
         body = (
             "\n  --- Owner Commands ---\n"
             "  /admin_menu          - View current menu with details\n"
-            "  /admin_add <json>    - Add a drink (JSON format)\n"
+            "  /admin_add           - Add a drink (conversational wizard)\n"
             "  /admin_remove <name> - Remove a drink by name\n"
             "  /admin_reload        - Reload menu from file\n"
+            "  /admin_cancel        - Cancel current wizard\n"
             "  ----------------------\n"
-            "\n  Example /admin_add:\n"
-            '  /admin_add {"name":"Mocha","description":"Chocolate + espresso bliss","moods":["happy","tired"],"caffeine_level":"medium","temperature":"either","price":5.75}'
+            "\n  To add a drink easily, just type /admin_add and follow the prompts."
         )
         return f"{header}{body}" if header else body
 
@@ -355,3 +355,121 @@ class CafeBotEngine:
         DRINK_MENU.clear()
         DRINK_MENU.extend(load_menu())
         return f"Menu reloaded from file. {len(DRINK_MENU)} drinks available."
+
+    # ---------- admin wizard (conversational add drink) ----------
+
+    def admin_start_add_wizard(self, user_id: str) -> str:
+        """Start the conversational add-drink wizard."""
+        state = self._get_state(user_id)
+        state.admin_wizard = "add_drink"
+        state.admin_wizard_data = {}
+        return (
+            "Let's add a new drink! I'll ask a few questions.\n"
+            "Type /admin_cancel anytime to abort.\n\n"
+            "Question 1/6: What is the drink name?"
+        )
+
+    def admin_cancel_wizard(self, user_id: str) -> str:
+        """Cancel any active wizard."""
+        state = self._get_state(user_id)
+        state.admin_wizard = None
+        state.admin_wizard_data = {}
+        return "Wizard cancelled. Nothing was saved."
+
+    def handle_admin_wizard(self, user_id: str, message: str) -> str | None:
+        """Handle a wizard step. Returns reply if in wizard, None otherwise."""
+        state = self._get_state(user_id)
+        if state.admin_wizard != "add_drink":
+            return None
+
+        data = state.admin_wizard_data
+        step = len(data)
+
+        # Step 0: name
+        if step == 0:
+            name = message.strip()
+            if not name:
+                return "Please enter a valid name.\nQuestion 1/6: What is the drink name?"
+            if any(d.name.lower() == name.lower() for d in DRINK_MENU):
+                return f"'{name}' already exists. Try a different name or /admin_cancel."
+            data["name"] = name
+            return f"Got it: {name}\n\nQuestion 2/6: What is the description?"
+
+        # Step 1: description
+        if step == 1:
+            desc = message.strip()
+            if not desc:
+                return "Please enter a description.\nQuestion 2/6: What is the description?"
+            data["description"] = desc
+            return (
+                "Nice!\n\n"
+                "Question 3/6: What moods is this drink for?\n"
+                "(comma-separated, e.g.: tired, stressed, happy)"
+            )
+
+        # Step 2: moods
+        if step == 2:
+            moods = [m.strip().lower() for m in message.split(",") if m.strip()]
+            if not moods:
+                return "Please enter at least one mood.\nQuestion 3/6: What moods is this drink for?"
+            data["moods"] = moods
+            return (
+                "Great!\n\n"
+                "Question 4/6: What is the caffeine level?\n"
+                "Options: none, low, medium, high"
+            )
+
+        # Step 3: caffeine_level
+        if step == 3:
+            level = message.strip().lower()
+            if level not in ("none", "low", "medium", "high"):
+                return "Please choose: none, low, medium, or high.\nQuestion 4/6: What is the caffeine level?"
+            data["caffeine_level"] = level
+            return (
+                "Got it!\n\n"
+                "Question 5/6: What is the temperature?\n"
+                "Options: hot, iced, either"
+            )
+
+        # Step 4: temperature
+        if step == 4:
+            temp = message.strip().lower()
+            if temp not in ("hot", "iced", "either"):
+                return "Please choose: hot, iced, or either.\nQuestion 5/6: What is the temperature?"
+            data["temperature"] = temp
+            return "Almost there!\n\nQuestion 6/6: What is the price? (e.g. 5.50)"
+
+        # Step 5: price
+        if step == 5:
+            try:
+                price = float(message.strip())
+                if price <= 0:
+                    raise ValueError
+            except ValueError:
+                return "Please enter a valid price (e.g. 5.50).\nQuestion 6/6: What is the price?"
+            data["price"] = price
+
+            # All done — save the drink
+            drink = Drink(
+                name=data["name"],
+                description=data["description"],
+                moods=data["moods"],
+                caffeine_level=data["caffeine_level"],
+                temperature=data["temperature"],
+                price=price,
+            )
+            DRINK_MENU.append(drink)
+            save_menu(DRINK_MENU)
+
+            # Clear wizard state
+            state.admin_wizard = None
+            state.admin_wizard_data = {}
+
+            return (
+                f"Done! '{drink.name}' has been added to the menu.\n"
+                f"Price: ${drink.price:.2f} | Caffeine: {drink.caffeine_level} | Temp: {drink.temperature}\n"
+                f"Moods: {', '.join(drink.moods)}\n\n"
+                f"Use /admin_menu to see the full menu."
+            )
+
+        return None
