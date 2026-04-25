@@ -39,7 +39,10 @@ def detect_language(text: str) -> str:
         if not probs:
             return _DEFAULT_LANG
         best = max(probs, key=lambda x: x.prob)
-        if best.prob < 0.3:
+        if best.prob < 0.6:
+            return _DEFAULT_LANG
+        # langdetect often confuses casual English with Tagalog; treat low-confidence Tagalog as English
+        if best.lang == "tl" and best.prob < 0.9:
             return _DEFAULT_LANG
         return best.lang
     except LangDetectException:

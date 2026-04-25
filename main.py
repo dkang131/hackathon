@@ -20,10 +20,10 @@ engine = CafeBotEngine()
 
 @app.get("/health")
 async def health() -> dict:
-    """Health check — also reports Azure LLM status."""
+    """Health check — also reports Ollama LLM status."""
     return {
         "status": "ok",
-        "azure_llm_available": engine._llm.available,
+        "ollama_llm_available": engine._llm.available,
     }
 
 

@@ -1,36 +1,31 @@
-"""Azure OpenAI LLM client wrapper."""
+"""Ollama LLM client wrapper."""
 
 import logging
 from datetime import datetime
 
-from openai import AsyncAzureOpenAI
+import httpx
 
 from .config import settings
 from .menu import DRINK_MENU
 
 
-class AzureLLMClient:
-    """Async Azure OpenAI client with fallback handling."""
+class OllamaLLMClient:
+    """Async Ollama client with fallback handling."""
 
     def __init__(self) -> None:
-        self._client: AsyncAzureOpenAI | None = None
+        self._client: httpx.AsyncClient | None = None
         self._init()
 
     def _init(self) -> None:
         if not all(
             [
-                settings.azure_openai_endpoint,
-                settings.azure_openai_api_key,
-                settings.azure_openai_deployment_name,
+                settings.ollama_host,
+                settings.ollama_model,
             ]
         ):
             return
         try:
-            self._client = AsyncAzureOpenAI(
-                azure_endpoint=settings.azure_openai_endpoint,
-                api_key=settings.azure_openai_api_key,
-                api_version=settings.azure_openai_api_version,
-            )
+            self._client = httpx.AsyncClient(timeout=300.0)
         except Exception:
             self._client = None
 
@@ -64,14 +59,20 @@ class AzureLLMClient:
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         try:
-            response = await self._client.chat.completions.create(
-                model=settings.azure_openai_deployment_name,
-                messages=messages,
-                temperature=0.9,
-                max_tokens=150,
-            )
-            return response.choices[0].message.content or ""
+            url = f"{settings.ollama_host.rstrip('/')}/api/chat"
+            payload = {
+                "model": settings.ollama_model,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "temperature": 0.9,
+                },
+            }
+            response = await self._client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("message", {}).get("content", "")
         except Exception as e:
             # Silently fail so engine falls back to local mode
-            logging.debug("Azure LLM error: %s", e)
+            logging.debug("Ollama LLM error: %s", e)
             return ""

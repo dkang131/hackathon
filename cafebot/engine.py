@@ -6,7 +6,7 @@ from datetime import datetime
 from .models import Drink, OrderItem, UserState
 from .menu import DRINK_MENU, MOOD_KEYWORDS
 from .menu_manager import load_menu, save_menu
-from .llm import AzureLLMClient
+from .llm import OllamaLLMClient
 from .i18n import detect_language, language_name
 from .config import settings
 
@@ -93,7 +93,7 @@ class CafeBotEngine:
 
     def __init__(self) -> None:
         self._users: dict[str, UserState] = {}
-        self._llm = AzureLLMClient()
+        self._llm = OllamaLLMClient()
 
     # ---------- state management ----------
 
@@ -169,7 +169,7 @@ class CafeBotEngine:
         state = self._get_state(user_id)
         status_lines = [
             "CafeMate is online!",
-            f"Azure OpenAI: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
+            f"Ollama: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
             f"Menu items: {len(DRINK_MENU)}",
             "Languages: Indonesian, Chinese, Japanese, Korean, English, Spanish, French, and more!",
             "",
@@ -191,12 +191,11 @@ class CafeBotEngine:
         state = self._get_state(user_id)
         lower = message.lower()
 
-        # Detect language from user input; stick to stored lang for short messages
-        if len(message.strip()) >= 10:
+        # Detect language from user input; only detect for messages with enough text
+        if len(message.strip()) >= 15:
             detected = detect_language(message)
-            if detected != "en" or state.lang_code == "en":
-                state.lang_code = detected
-                state.lang_name = language_name(detected)
+            state.lang_code = detected
+            state.lang_name = language_name(detected)
         lang_code = state.lang_code
         lang_name = state.lang_name
 
@@ -218,27 +217,15 @@ class CafeBotEngine:
                 return f"{random.choice(_CONFIRMATIONS)}\n{self._render_order(state)}"
             return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
-        # --- LLM mode ---
+        # --- LLM mode (keywords disabled — let Ollama handle mood & language naturally) ---
         if self._llm.available:
-            mood = self._detect_mood(message)
-            drink = self._recommend_for_mood(mood) if mood else None
-            context = ""
-            if drink:
-                context = (
-                    f" The user seems to be feeling something. "
-                    f"You want to recommend {drink.name} ({drink.description}). "
-                    f"Respond warmly and naturally, like a friend suggesting it. "
-                    f"Don't list all the details, just mention it casually."
-                )
-            reply = await self._llm.chat(message + context, state.conversation_history, language=lang_name)
+            reply = await self._llm.chat(message, state.conversation_history, language=lang_name)
             if reply:
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
-                if drink and drink.name.lower() not in reply.lower():
-                    reply += f"\n\nActually, since you mentioned feeling a bit {mood}, how about a **{drink.name}**? {drink.description} It's ${drink.price:.2f}."
                 return reply
 
-        # --- local fallback (English only) ---
+        # --- local fallback (last resort only) ---
         return self._local_response(message)
 
     def _local_response(self, message: str) -> str:
