@@ -30,6 +30,15 @@ class UserState:
     user_name: str | None = None
     lang_code: str = "en"
     lang_name: str = "English"
+    # Order confirmation
+    pending_drink: Drink | None = None
+    last_recommended: Drink | None = None
+
+    # Checkout flow
+    checkout_state: str | None = None  # "awaiting_payment", "order_placed"
+    payment_method: str | None = None
+    paid_amount: float = 0.0
+
     # Admin wizard state
     admin_wizard: str | None = None  # e.g. "add_drink"
     admin_wizard_data: dict = field(default_factory=dict)

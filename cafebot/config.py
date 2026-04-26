@@ -6,9 +6,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Loads config from environment / .env file."""
 
-    # Ollama
-    ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
+    # Azure OpenAI
+    azure_openai_endpoint: str = ""
+    azure_openai_api_key: str = ""
+    azure_openai_deployment_name: str = ""
+    azure_openai_api_version: str = "2025-04-14"
 
     # Telegram (for future webhook integration)
     telegram_bot_token: str = ""

@@ -20,10 +20,10 @@ engine = CafeBotEngine()
 
 @app.get("/health")
 async def health() -> dict:
-    """Health check — also reports Ollama LLM status."""
+    """Health check — also reports Azure LLM status."""
     return {
         "status": "ok",
-        "ollama_llm_available": engine._llm.available,
+        "azure_llm_available": engine._llm.available,
     }
 
 
@@ -92,6 +92,27 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
     data = await request.json()
 
+    # Handle callback queries (inline keyboard button presses)
+    callback_query = data.get("callback_query")
+    if callback_query:
+        callback_data = callback_query.get("data", "")
+        query_id = callback_query["id"]
+        from_user = callback_query["from"]
+        user_id = str(from_user["id"])
+        chat_id = callback_query["message"]["chat"]["id"]
+
+        # Answer callback to remove loading spinner
+        import httpx
+        answer_url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/answerCallbackQuery"
+        asyncio.create_task(
+            _async_post(answer_url, {"callback_query_id": query_id})
+        )
+
+        if callback_data.startswith("pickup:"):
+            reply = engine.confirm_pickup(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
+        return JSONResponse({"ok": True})
+
     # Extract message
     message_obj = data.get("message") or data.get("edited_message")
     if not message_obj:
@@ -100,6 +121,8 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     text = message_obj.get("text", "").strip()
     chat_id = message_obj["chat"]["id"]
     user_id = str(message_obj["from"]["id"])
+    user_from = message_obj["from"]
+    name = user_from.get("first_name") or user_from.get("username")
 
     if not text:
         return JSONResponse({"ok": True})
@@ -112,7 +135,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
     # Handle /start
     if text.lower() == "/start":
-        reply = await engine.greet(user_id)
+        reply = await engine.greet(user_id, name=name)
 
     # ---- owner admin commands ----
     elif text.lower() in ["/admin", "/admin_help"]:
@@ -154,21 +177,65 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
     # ---- regular customer chat ----
     else:
-        reply = await engine.chat(user_id, text)
+        reply = await engine.chat(user_id, text, name=name)
 
     # Respond via Telegram Bot API (fire-and-forget via background task or httpx)
-    # For now we return 200 quickly; in production use background tasks or an async HTTP client.
     import asyncio
     asyncio.create_task(_send_telegram_message(chat_id, reply))
+
+    # If user paid via QR, send the QR code image
+    qr_path = engine.get_payment_qr_path(user_id)
+    if qr_path:
+        asyncio.create_task(_send_telegram_photo(chat_id, qr_path))
+
+    # If user just placed an order, schedule delayed "ready for pickup" notification
+    if engine.get_checkout_state(user_id) == "order_placed":
+        asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
 
     return JSONResponse({"ok": True})
 
 
-async def _send_telegram_message(chat_id: int, text: str) -> None:
+async def _async_post(url: str, payload: dict) -> None:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
+
+
+async def _send_telegram_message(chat_id: int, text: str, reply_markup: dict | None = None) -> None:
     """Send a message back to Telegram using Bot API."""
     if not settings.telegram_bot_token:
         return
     import httpx
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient() as client:
-        await client.post(url, json={"chat_id": chat_id, "text": text})
+        await client.post(url, json=payload)
+
+
+async def _send_telegram_photo(chat_id: int, photo_path: str) -> None:
+    """Send a photo back to Telegram using Bot API."""
+    if not settings.telegram_bot_token:
+        return
+    import httpx
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto"
+    async with httpx.AsyncClient() as client:
+        with open(photo_path, "rb") as f:
+            await client.post(url, files={"photo": f}, data={"chat_id": chat_id})
+
+
+async def _send_order_ready_notification(chat_id: int, user_id: str) -> None:
+    """Send delayed 'order ready' message with pickup confirmation button."""
+    import asyncio
+    await asyncio.sleep(15)
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+        ]
+    }
+    await _send_telegram_message(
+        chat_id,
+        "Great news! Your order is ready for pickup. Please confirm once you've received it!",
+        reply_markup=reply_markup,
+    )

@@ -6,7 +6,7 @@ from datetime import datetime
 from .models import Drink, OrderItem, UserState
 from .menu import DRINK_MENU, MOOD_KEYWORDS
 from .menu_manager import load_menu, save_menu
-from .llm import OllamaLLMClient
+from .llm import AzureLLMClient
 from .i18n import detect_language, language_name
 from .config import settings
 
@@ -93,7 +93,7 @@ class CafeBotEngine:
 
     def __init__(self) -> None:
         self._users: dict[str, UserState] = {}
-        self._llm = OllamaLLMClient()
+        self._llm = AzureLLMClient()
 
     # ---------- state management ----------
 
@@ -165,30 +165,45 @@ class CafeBotEngine:
 
     # ---------- core logic ----------
 
-    async def greet(self, user_id: str) -> str:
+    async def greet(self, user_id: str, name: str | None = None) -> str:
         state = self._get_state(user_id)
+        if name:
+            state.user_name = name
+        user_name = state.user_name
         status_lines = [
             "CafeMate is online!",
-            f"Ollama: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
+            f"User: {user_name}" if user_name else "",
+            f"Azure OpenAI: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
             f"Menu items: {len(DRINK_MENU)}",
             "Languages: Indonesian, Chinese, Japanese, Korean, English, Spanish, French, and more!",
             "",
         ]
         if self._llm.available:
+            greet_prompt = (
+                f"Say a warm, friendly greeting to {user_name}, a new customer. "
+                if user_name
+                else "Say a warm, friendly greeting to a new customer. "
+            ) + "Ask how they're doing today."
             reply = await self._llm.chat(
-                "Say a warm, friendly greeting to a new customer. Ask how they're doing today.",
+                greet_prompt,
                 state.conversation_history,
                 language="English",
+                user_name=user_name,
             )
             if reply:
                 state.conversation_history.append({"role": "user", "content": "Say a warm, friendly greeting to a new customer. Ask how they're doing today."})
                 state.conversation_history.append({"role": "assistant", "content": reply})
                 return "\n".join(status_lines) + reply
-        return "\n".join(status_lines) + random.choice(_GREETINGS)
+        fallback = random.choice(_GREETINGS)
+        if user_name:
+            fallback = f"Hey {user_name}! {fallback}"
+        return "\n".join(status_lines) + fallback
 
-    async def chat(self, user_id: str, message: str) -> str:
+    async def chat(self, user_id: str, message: str, name: str | None = None) -> str:
         """Main entry — returns the bot's reply for the given user & message."""
         state = self._get_state(user_id)
+        if name:
+            state.user_name = name
         lower = message.lower()
 
         # Detect language from user input; only detect for messages with enough text
@@ -198,6 +213,34 @@ class CafeBotEngine:
             state.lang_name = language_name(detected)
         lang_code = state.lang_code
         lang_name = state.lang_name
+
+        # --- order confirmation handling (explicit drink mention) ---
+        if state.pending_drink:
+            if any(kw in lower for kw in ["yes", "yeah", "yep", "sure", "ok", "okay", "confirm", "add it", "go ahead"]):
+                state.order.append(OrderItem(state.pending_drink))
+                drink_name = state.pending_drink.name
+                state.pending_drink = None
+                return f"{random.choice(_CONFIRMATIONS)}\n{self._render_order(state)}"
+            elif any(kw in lower for kw in ["no", "nope", "nah", "cancel", "never mind", "nevermind", "pass", "skip"]):
+                state.pending_drink = None
+                return "No worries! Let me know if you want something else."
+            else:
+                return f"You still have **{state.pending_drink.name}** waiting to be added. Just say **yes** to confirm or **no** to cancel!"
+
+        # --- order confirmation handling (LLM recommendation follow-up) ---
+        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
+            state.pending_drink = state.last_recommended
+            state.last_recommended = None
+            return (
+                f"You want to add a **{state.pending_drink.name}**?\n"
+                f"  {state.pending_drink.description}\n"
+                f"  Price: ${state.pending_drink.price:.2f}\n\n"
+                f"Say **yes** to add it to your order, or **no** to skip!"
+            )
+
+        # --- payment selection during checkout ---
+        if state.checkout_state == "awaiting_payment":
+            return await self._handle_payment(user_id, message)
 
         # --- built-in commands ---
         if any(kw in lower for kw in ["menu", "what do you have", "what's available", "drinks"]):
@@ -213,16 +256,26 @@ class CafeBotEngine:
         if ordered:
             drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
             if drink:
-                state.order.append(OrderItem(drink))
-                return f"{random.choice(_CONFIRMATIONS)}\n{self._render_order(state)}"
+                state.pending_drink = drink
+                return (
+                    f"You want to add a **{drink.name}**?\n"
+                    f"  {drink.description}\n"
+                    f"  Price: ${drink.price:.2f}\n\n"
+                    f"Say **yes** to add it to your order, or **no** to skip!"
+                )
             return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
-        # --- LLM mode (keywords disabled — let Ollama handle mood & language naturally) ---
+        # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
         if self._llm.available:
-            reply = await self._llm.chat(message, state.conversation_history, language=lang_name)
+            reply = await self._llm.chat(message, state.conversation_history, language=lang_name, user_name=state.user_name)
             if reply:
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
+                # Track if LLM recommended a drink so follow-up "sure/yes" can trigger order confirmation
+                for drink in DRINK_MENU:
+                    if drink.name.lower() in reply.lower():
+                        state.last_recommended = drink
+                        break
                 return reply
 
         # --- local fallback (last resort only) ---
@@ -244,14 +297,111 @@ class CafeBotEngine:
         ]
         return random.choice(generic)
 
+    def _generate_va_number(self, user_id: str) -> str:
+        """Generate a mock virtual account number."""
+        import hashlib
+        seed = hashlib.md5(f"{user_id}-cafe-mate-va".encode()).hexdigest()[:10]
+        return f"88099{seed}"
+
+    def _generate_qr_code(self, user_id: str, amount: float) -> str:
+        """Generate a mock QR code image and return the file path."""
+        import os
+        import qrcode
+        data = f"https://cafe-mate.mock/pay?user={user_id}&amount={amount:.2f}&ref=CAFEMATE"
+        img = qrcode.make(data)
+        os.makedirs("data", exist_ok=True)
+        path = f"data/qr_{user_id}.png"
+        img.save(path)
+        return path
+
     async def _checkout(self, user_id: str) -> str:
         state = self._get_state(user_id)
         if not state.order:
             return "You haven't ordered anything yet! Let's pick something out first."
+        if state.checkout_state == "awaiting_payment":
+            return (
+                f"{self._render_order(state)}\n"
+                "Please choose a payment method:\n"
+                "  1. Virtual Account (VA)\n"
+                "  2. QR Code"
+            )
         total = sum(i.drink.price * i.quantity for i in state.order)
         receipt = self._render_order(state)
+        state.checkout_state = "awaiting_payment"
+        return (
+            f"{receipt}\n"
+            f"Total: ${total:.2f}\n\n"
+            "Please choose a payment method:\n"
+            "  1. Virtual Account (VA)\n"
+            "  2. QR Code"
+        )
+
+    async def _handle_payment(self, user_id: str, message: str) -> str:
+        """Handle payment selection during checkout."""
+        state = self._get_state(user_id)
+        lower = message.lower()
+        payment_methods = {
+            "virtual account": "VA",
+            "va": "VA",
+            "1": "VA",
+            "qr": "QR",
+            "qris": "QR",
+            "qr code": "QR",
+            "2": "QR",
+        }
+        selected = None
+        for key, method in payment_methods.items():
+            if key in lower:
+                selected = method
+                break
+        if not selected:
+            return (
+                "Hmm, I didn't catch that. Please choose:\n"
+                "  1. Virtual Account (VA)\n"
+                "  2. QR Code"
+            )
+        total = sum(i.drink.price * i.quantity for i in state.order)
+        state.payment_method = selected
+        state.paid_amount = total
+        state.checkout_state = "order_placed"
+
+        if selected == "VA":
+            va_number = self._generate_va_number(user_id)
+            return (
+                f"Order placed! Total: ${total:.2f}\n\n"
+                f"Please transfer to this Virtual Account:\n"
+                f"  **{va_number}**\n\n"
+                "We'll notify you when your order is ready for pickup!"
+            )
+        else:  # QR
+            qr_path = self._generate_qr_code(user_id, total)
+            return (
+                f"Order placed! Total: ${total:.2f}\n\n"
+                f"Scan the QR code below to pay:\n"
+                f"  `{qr_path}`\n\n"
+                "We'll notify you when your order is ready for pickup!"
+            )
+
+    def get_payment_qr_path(self, user_id: str) -> str | None:
+        """Return QR code image path if user paid via QR."""
+        state = self._get_state(user_id)
+        if state.payment_method == "QR":
+            return f"data/qr_{user_id}.png"
+        return None
+
+    def get_checkout_state(self, user_id: str) -> str | None:
+        """Get current checkout state for a user."""
+        state = self._get_state(user_id)
+        return state.checkout_state
+
+    def confirm_pickup(self, user_id: str) -> str:
+        """Mark order as picked up and clear state."""
+        state = self._get_state(user_id)
         state.order = []
-        return f"{receipt}\n{random.choice(_FAREWELLS)}\n  (Order complete! Total paid: ${total:.2f})"
+        state.checkout_state = None
+        state.payment_method = None
+        state.paid_amount = 0.0
+        return "Enjoy your drinks! Thanks for visiting CafeMate. Come back soon!"
 
     async def farewell(self, user_id: str) -> str:
         state = self._get_state(user_id)
