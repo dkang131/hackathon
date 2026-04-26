@@ -130,17 +130,17 @@ class CafeBotEngine:
         temps = {"hot": "steaming hot", "iced": "ice-cold", "either": "just the way you like it"}
         caffeine = {"none": "caffeine-free", "low": "lightly caffeinated", "medium": "moderately caffeinated", "high": "highly caffeinated"}
         return (
-            f"How about a **{drink.name}**? It's {temps[drink.temperature]} and {caffeine[drink.caffeine_level]}.\n"
+            f"How about a *{drink.name}*? It's {temps[drink.temperature]} and {caffeine[drink.caffeine_level]}.\n"
             f"  {drink.description}\n"
             f"  Price: ${drink.price:.2f}"
         )
 
     @staticmethod
     def _render_menu() -> str:
-        lines = ["\n  --- Our Menu ---"]
+        lines = ["☕ *Our Menu*"]
         for d in DRINK_MENU:
-            lines.append(f"  {d.name:<25} ${d.price:.2f}  ({d.caffeine_level} caffeine, {d.temperature})")
-        lines.append("  ------------------\n")
+            lines.append(f"• {d.name} — ${d.price:.2f} ({d.caffeine_level} caffeine, {d.temperature})")
+        lines.append("")
         return "\n".join(lines)
 
     @staticmethod
@@ -148,11 +148,11 @@ class CafeBotEngine:
         if not state.order:
             return "Your order's empty right now. Let's fix that!"
         total = sum(i.drink.price * i.quantity for i in state.order)
-        lines = ["\n  --- Your Order ---"]
+        lines = ["🧾 *Your Order*"]
         for i in state.order:
-            lines.append(f"  {i.quantity}x {i.drink.name:<20} ${i.drink.price * i.quantity:.2f}")
-        lines.append(f"  {'Total:':<25} ${total:.2f}")
-        lines.append("  ------------------\n")
+            lines.append(f"• {i.quantity}× {i.drink.name} — ${i.drink.price * i.quantity:.2f}")
+        lines.append(f"_Total: ${total:.2f}_")
+        lines.append("")
         return "\n".join(lines)
 
     @staticmethod
@@ -214,28 +214,14 @@ class CafeBotEngine:
         lang_code = state.lang_code
         lang_name = state.lang_name
 
-        # --- order confirmation handling (explicit drink mention) ---
-        if state.pending_drink:
-            if any(kw in lower for kw in ["yes", "yeah", "yep", "sure", "ok", "okay", "confirm", "add it", "go ahead"]):
-                state.order.append(OrderItem(state.pending_drink))
-                drink_name = state.pending_drink.name
-                state.pending_drink = None
-                return f"{random.choice(_CONFIRMATIONS)}\n{self._render_order(state)}"
-            elif any(kw in lower for kw in ["no", "nope", "nah", "cancel", "never mind", "nevermind", "pass", "skip"]):
-                state.pending_drink = None
-                return "No worries! Let me know if you want something else."
-            else:
-                return f"You still have **{state.pending_drink.name}** waiting to be added. Just say **yes** to confirm or **no** to cancel!"
-
         # --- order confirmation handling (LLM recommendation follow-up) ---
         if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
-            state.pending_drink = state.last_recommended
+            state.order.append(OrderItem(state.last_recommended))
             state.last_recommended = None
             return (
-                f"You want to add a **{state.pending_drink.name}**?\n"
-                f"  {state.pending_drink.description}\n"
-                f"  Price: ${state.pending_drink.price:.2f}\n\n"
-                f"Say **yes** to add it to your order, or **no** to skip!"
+                f"{random.choice(_CONFIRMATIONS)}\n"
+                f"{self._render_order(state)}\n"
+                "Want to add another drink, or say *checkout* to pay?"
             )
 
         # --- payment selection during checkout ---
@@ -249,19 +235,19 @@ class CafeBotEngine:
         if any(kw in lower for kw in ["my order", "what did i order", "show order"]):
             return self._render_order(state)
 
-        if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish"]):
+        # --- detect natural checkout/payment intent ---
+        if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish", "let's pay", "lets pay", "proceed to payment", "ready to pay", "i'm done", "im done", "all set", "wrap it up", "bill please"]):
             return await self._checkout(user_id)
 
         ordered = self._try_parse_order(message)
         if ordered:
             drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
             if drink:
-                state.pending_drink = drink
+                state.order.append(OrderItem(drink))
                 return (
-                    f"You want to add a **{drink.name}**?\n"
-                    f"  {drink.description}\n"
-                    f"  Price: ${drink.price:.2f}\n\n"
-                    f"Say **yes** to add it to your order, or **no** to skip!"
+                    f"{random.choice(_CONFIRMATIONS)}\n"
+                    f"{self._render_order(state)}\n"
+                    "Want to add another drink, or say *checkout* to pay?"
                 )
             return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
@@ -330,10 +316,10 @@ class CafeBotEngine:
         state.checkout_state = "awaiting_payment"
         return (
             f"{receipt}\n"
-            f"Total: ${total:.2f}\n\n"
-            "Please choose a payment method:\n"
-            "  1. Virtual Account (VA)\n"
-            "  2. QR Code"
+            # f"Total: ${total:.2f}\n\n"
+            # "Please choose a payment method:\n"
+            # "  1. Virtual Account (VA)\n"
+            # "  2. QR Code"
         )
 
     async def _handle_payment(self, user_id: str, message: str) -> str:
@@ -363,24 +349,58 @@ class CafeBotEngine:
         total = sum(i.drink.price * i.quantity for i in state.order)
         state.payment_method = selected
         state.paid_amount = total
-        state.checkout_state = "order_placed"
 
         if selected == "VA":
+            state.checkout_state = "awaiting_va_transfer"
             va_number = self._generate_va_number(user_id)
             return (
-                f"Order placed! Total: ${total:.2f}\n\n"
+                f"Total: ${total:.2f}\n\n"
                 f"Please transfer to this Virtual Account:\n"
-                f"  **{va_number}**\n\n"
-                "We'll notify you when your order is ready for pickup!"
+                f"  `{va_number}`\n\n"
+                f"Tap *I've Paid* once you're done!"
             )
         else:  # QR
+            state.checkout_state = "awaiting_qr_scan"
             qr_path = self._generate_qr_code(user_id, total)
             return (
-                f"Order placed! Total: ${total:.2f}\n\n"
-                f"Scan the QR code below to pay:\n"
-                f"  `{qr_path}`\n\n"
-                "We'll notify you when your order is ready for pickup!"
+                f"Total: ${total:.2f}\n\n"
+                f"Please scan the QR code below to pay. "
+                f"Tap *I've Scanned* once you're done!"
             )
+
+    async def checkout(self, user_id: str) -> str:
+        """Public wrapper to trigger checkout for a user."""
+        return await self._checkout(user_id)
+
+    def get_order_action_buttons(self, user_id: str) -> dict | None:
+        """Return Add Another / Checkout buttons if user has items and isn't in checkout flow."""
+        state = self._get_state(user_id)
+        if state.order and state.checkout_state is None and not state.last_recommended:
+            return {
+                "inline_keyboard": [
+                    [
+                        {"text": "☕ Add Another Drink", "callback_data": f"order_add:{user_id}"},
+                        {"text": "💳 Checkout", "callback_data": f"order_checkout:{user_id}"},
+                    ]
+                ]
+            }
+        return None
+
+    def confirm_qr_payment(self, user_id: str) -> str:
+        """Confirm QR payment scan and move to order_placed state."""
+        state = self._get_state(user_id)
+        if state.checkout_state != "awaiting_qr_scan":
+            return "Hmm, I don't see a pending QR payment."
+        state.checkout_state = "order_placed"
+        return "Your payment has been received! We'll notify you when your order is ready for pickup."
+
+    def confirm_va_payment(self, user_id: str) -> str:
+        """Confirm VA payment transfer and move to order_placed state."""
+        state = self._get_state(user_id)
+        if state.checkout_state != "awaiting_va_transfer":
+            return "Hmm, I don't see a pending VA transfer."
+        state.checkout_state = "order_placed"
+        return "Your payment has been received! We'll notify you when your order is ready for pickup."
 
     def get_payment_qr_path(self, user_id: str) -> str | None:
         """Return QR code image path if user paid via QR."""

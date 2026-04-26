@@ -26,12 +26,12 @@ async def get_updates(client: httpx.AsyncClient, offset: int = 0) -> list[dict]:
     return data.get("result", [])
 
 
-async def send_message(client: httpx.AsyncClient, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
+async def send_message(client: httpx.AsyncClient, chat_id: int, text: str, reply_markup: dict | None = None, parse_mode: str = "Markdown") -> None:
     url = f"{BOT_API}/sendMessage"
     # Telegram has a 4096 char limit per message
     chunks = [text[i : i + 4000] for i in range(0, len(text), 4000)]
     for i, chunk in enumerate(chunks):
-        payload = {"chat_id": chat_id, "text": chunk}
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": parse_mode}
         if i == len(chunks) - 1 and reply_markup:
             payload["reply_markup"] = reply_markup
         await client.post(url, json=payload)
@@ -46,6 +46,12 @@ async def send_photo(client: httpx.AsyncClient, chat_id: int, photo_path: str) -
     url = f"{BOT_API}/sendPhoto"
     with open(photo_path, "rb") as f:
         await client.post(url, files={"photo": f}, data={"chat_id": chat_id})
+
+
+async def edit_message_remove_buttons(client: httpx.AsyncClient, chat_id: int, message_id: int) -> None:
+    """Remove inline keyboard from a message to prevent double-presses."""
+    url = f"{BOT_API}/editMessageReplyMarkup"
+    await client.post(url, json={"chat_id": chat_id, "message_id": message_id, "reply_markup": {}})
 
 
 async def send_order_ready(client: httpx.AsyncClient, chat_id: int, user_id: str) -> None:
@@ -79,6 +85,70 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             reply = engine.confirm_pickup(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> Pickup confirmed by {user_id}")
+        elif data.startswith("payment:"):
+            method = data.split(":", 1)[1]
+            reply = await engine.chat(user_id, method)
+            await send_message(client, chat_id, reply)
+            print(f"  -> Payment method selected: {method}")
+            # If user paid via QR, send the QR code image + scan button
+            qr_path = engine.get_payment_qr_path(user_id)
+            if qr_path:
+                await send_photo(client, chat_id, qr_path)
+                print(f"  -> Sent QR code image to {user_id}")
+            if engine.get_checkout_state(user_id) == "awaiting_qr_scan":
+                scan_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ I've Scanned", "callback_data": f"qr_scanned:{user_id}"}]
+                    ]
+                }
+                await send_message(client, chat_id, "Tap the button after you scan the QR code:", reply_markup=scan_markup)
+                print(f"  -> Sent QR scan button to {user_id}")
+            if engine.get_checkout_state(user_id) == "awaiting_va_transfer":
+                va_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ I've Paid", "callback_data": f"va_paid:{user_id}"}]
+                    ]
+                }
+                await send_message(client, chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup)
+                print(f"  -> Sent VA paid button to {user_id}")
+            # If user just placed an order, schedule delayed "ready for pickup" notification
+            if engine.get_checkout_state(user_id) == "order_placed":
+                asyncio.create_task(send_order_ready(client, chat_id, user_id))
+                print(f"  -> Scheduled order ready notification for {user_id}")
+        elif data.startswith("qr_scanned:"):
+            reply = engine.confirm_qr_payment(user_id)
+            await send_message(client, chat_id, reply)
+            print(f"  -> QR payment confirmed by {user_id}")
+            # Schedule delayed "ready for pickup" notification
+            asyncio.create_task(send_order_ready(client, chat_id, user_id))
+            print(f"  -> Scheduled order ready notification for {user_id}")
+        elif data.startswith("va_paid:"):
+            reply = engine.confirm_va_payment(user_id)
+            await send_message(client, chat_id, reply)
+            print(f"  -> VA payment confirmed by {user_id}")
+            # Schedule delayed "ready for pickup" notification
+            asyncio.create_task(send_order_ready(client, chat_id, user_id))
+            print(f"  -> Scheduled order ready notification for {user_id}")
+        elif data.startswith("order_add:"):
+            await send_message(client, chat_id, "What would you like to add?")
+            print(f"  -> Add another drink requested by {user_id}")
+        elif data.startswith("order_checkout:"):
+            reply = await engine.checkout(user_id)
+            await send_message(client, chat_id, reply)
+            print(f"  -> Checkout triggered by {user_id}")
+            # If user is at checkout, send payment method buttons
+            if engine.get_checkout_state(user_id) == "awaiting_payment":
+                payment_markup = {
+                    "inline_keyboard": [
+                        [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
+                        [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                    ]
+                }
+                await send_message(client, chat_id, "Choose your payment method:", reply_markup=payment_markup)
+                print(f"  -> Sent payment buttons to {user_id}")
+        # Remove buttons from the original message to prevent double-presses
+        message_id = callback_query["message"]["message_id"]
+        await edit_message_remove_buttons(client, chat_id, message_id)
         return
 
     message_obj = update.get("message") or update.get("edited_message")
@@ -130,6 +200,27 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
 
     await send_message(client, chat_id, reply)
     print(f"  -> Replied ({len(reply)} chars)")
+
+    # If user has order items, send Add Another / Checkout action buttons
+    action_buttons = engine.get_order_action_buttons(user_id)
+    if action_buttons:
+        await send_message(client, chat_id, "What would you like to do next?", reply_markup=action_buttons)
+        print(f"  -> Sent order action buttons to {user_id}")
+
+    # If user is at checkout, send payment method buttons
+    if engine.get_checkout_state(user_id) == "awaiting_payment":
+        payment_markup = {
+            "inline_keyboard": [
+                [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
+                [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+            ]
+        }
+        await send_message(
+            client, chat_id,
+            "Choose your payment method:",
+            reply_markup=payment_markup,
+        )
+        print(f"  -> Sent payment buttons to {user_id}")
 
     # If user paid via QR, send the QR code image
     qr_path = engine.get_payment_qr_path(user_id)

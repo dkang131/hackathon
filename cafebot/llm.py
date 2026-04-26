@@ -52,8 +52,10 @@ class AzureLLMClient:
             "IMPORTANT: Detect the language the user is writing in and reply naturally in that same language. "
             "Do not translate drink names — keep them in English (e.g., Espresso, Matcha Latte). "
             "But all other text (greetings, explanations, friendly banter) must be in the user's detected language. "
-            "IMPORTANT: You can RECOMMEND drinks but you cannot place orders. If the user wants to order something you recommended, "
-            "do NOT say it has been added to their order. Instead, ask them to confirm by saying 'yes' or the drink name."
+            "IMPORTANT: When a user mentions a drink or agrees to one you recommended, it is automatically added to their order. "
+            "You don't need to ask for confirmation — just acknowledge it warmly and let them know their current order. "
+            "If they want to finish and pay, they can say things like 'I'm done', 'let's pay', or 'checkout' and the system will handle it. "
+            "Guide them naturally: after adding a drink, you can ask if they want anything else or if they're ready to pay."
         )
 
     async def chat(

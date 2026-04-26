@@ -111,6 +111,58 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         if callback_data.startswith("pickup:"):
             reply = engine.confirm_pickup(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
+        elif callback_data.startswith("payment:"):
+            method = callback_data.split(":", 1)[1]
+            reply = await engine.chat(user_id, method)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
+            # If user paid via QR, send the QR code image + scan button
+            qr_path = engine.get_payment_qr_path(user_id)
+            if qr_path:
+                asyncio.create_task(_send_telegram_photo(chat_id, qr_path))
+            if engine.get_checkout_state(user_id) == "awaiting_qr_scan":
+                scan_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ I've Scanned", "callback_data": f"qr_scanned:{user_id}"}]
+                    ]
+                }
+                asyncio.create_task(_send_telegram_message(chat_id, "Tap the button after you scan the QR code:", reply_markup=scan_markup))
+            if engine.get_checkout_state(user_id) == "awaiting_va_transfer":
+                va_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ I've Paid", "callback_data": f"va_paid:{user_id}"}]
+                    ]
+                }
+                asyncio.create_task(_send_telegram_message(chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup))
+            # If user just placed an order, schedule delayed "ready for pickup" notification
+            if engine.get_checkout_state(user_id) == "order_placed":
+                asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+        elif callback_data.startswith("qr_scanned:"):
+            reply = engine.confirm_qr_payment(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
+            # Schedule delayed "ready for pickup" notification
+            asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+        elif callback_data.startswith("va_paid:"):
+            reply = engine.confirm_va_payment(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
+            # Schedule delayed "ready for pickup" notification
+            asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+        elif callback_data.startswith("order_add:"):
+            asyncio.create_task(_send_telegram_message(chat_id, "What would you like to add?"))
+        elif callback_data.startswith("order_checkout:"):
+            reply = await engine.checkout(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
+            # If user is at checkout, send payment method buttons
+            if engine.get_checkout_state(user_id) == "awaiting_payment":
+                payment_markup = {
+                    "inline_keyboard": [
+                        [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
+                        [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                    ]
+                }
+                asyncio.create_task(_send_telegram_message(chat_id, "Choose your payment method:", reply_markup=payment_markup))
+        # Remove buttons from the original message to prevent double-presses
+        message_id = callback_query["message"]["message_id"]
+        asyncio.create_task(_edit_telegram_remove_buttons(chat_id, message_id))
         return JSONResponse({"ok": True})
 
     # Extract message
@@ -183,6 +235,21 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     import asyncio
     asyncio.create_task(_send_telegram_message(chat_id, reply))
 
+    # If user has order items, send Add Another / Checkout action buttons
+    action_buttons = engine.get_order_action_buttons(user_id)
+    if action_buttons:
+        asyncio.create_task(_send_telegram_message(chat_id, "What would you like to do next?", reply_markup=action_buttons))
+
+    # If user is at checkout, send payment method buttons
+    if engine.get_checkout_state(user_id) == "awaiting_payment":
+        payment_markup = {
+            "inline_keyboard": [
+                [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
+                [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+            ]
+        }
+        asyncio.create_task(_send_telegram_message(chat_id, "Choose your payment method:", reply_markup=payment_markup))
+
     # If user paid via QR, send the QR code image
     qr_path = engine.get_payment_qr_path(user_id)
     if qr_path:
@@ -207,7 +274,7 @@ async def _send_telegram_message(chat_id: int, text: str, reply_markup: dict | N
         return
     import httpx
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient() as client:
@@ -223,6 +290,16 @@ async def _send_telegram_photo(chat_id: int, photo_path: str) -> None:
     async with httpx.AsyncClient() as client:
         with open(photo_path, "rb") as f:
             await client.post(url, files={"photo": f}, data={"chat_id": chat_id})
+
+
+async def _edit_telegram_remove_buttons(chat_id: int, message_id: int) -> None:
+    """Remove inline keyboard from a message to prevent double-presses."""
+    if not settings.telegram_bot_token:
+        return
+    import httpx
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/editMessageReplyMarkup"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"chat_id": chat_id, "message_id": message_id, "reply_markup": {}})
 
 
 async def _send_order_ready_notification(chat_id: int, user_id: str) -> None:
