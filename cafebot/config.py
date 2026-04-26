@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
     azure_openai_deployment_name: str = ""
-    azure_openai_api_version: str = "2025-04-14"
+    azure_openai_api_version: str = "2025-04-14preview"
 
     # Telegram (for future webhook integration)
     telegram_bot_token: str = ""
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     # Cafe owner — Telegram user ID allowed to run admin commands
     owner_telegram_id: str = ""
+
+    # Kitchen group — Telegram group chat ID for order notifications
+    kitchen_group_id: str = ""
 
     # App
     app_port: int = 8000

@@ -119,24 +119,47 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
                 }
                 await send_message(client, chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup)
                 print(f"  -> Sent VA paid button to {user_id}")
-            # If user just placed an order, schedule delayed "ready for pickup" notification
-            if engine.get_checkout_state(user_id) == "order_placed":
-                asyncio.create_task(send_order_ready(client, chat_id, user_id))
-                print(f"  -> Scheduled order ready notification for {user_id}")
+            # If user just placed an order, notify kitchen group
+            if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
+                print(f"  -> Sent kitchen notification for {user_id}")
         elif data.startswith("qr_scanned:"):
             reply = engine.confirm_qr_payment(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> QR payment confirmed by {user_id}")
-            # Schedule delayed "ready for pickup" notification
-            asyncio.create_task(send_order_ready(client, chat_id, user_id))
-            print(f"  -> Scheduled order ready notification for {user_id}")
+            # Notify kitchen group
+            if settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
+                print(f"  -> Sent kitchen notification for {user_id}")
         elif data.startswith("va_paid:"):
             reply = engine.confirm_va_payment(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> VA payment confirmed by {user_id}")
-            # Schedule delayed "ready for pickup" notification
-            asyncio.create_task(send_order_ready(client, chat_id, user_id))
-            print(f"  -> Scheduled order ready notification for {user_id}")
+            # Notify kitchen group
+            if settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
+                print(f"  -> Sent kitchen notification for {user_id}")
+        elif data.startswith("kitchen_ready:"):
+            reply = engine.kitchen_mark_ready(user_id)
+            if reply:
+                # Send pickup notification to user (user_id == chat_id for private chats)
+                user_chat = int(user_id)
+                pickup_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+                    ]
+                }
+                await send_message(client, user_chat, reply, reply_markup=pickup_markup)
+                print(f"  -> Kitchen marked order ready, sent pickup notification to {user_id}")
         elif data.startswith("order_add:"):
             await send_message(client, chat_id, "What would you like to add?")
             print(f"  -> Add another drink requested by {user_id}")
@@ -244,10 +267,13 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
         await send_photo(client, chat_id, qr_path)
         print(f"  -> Sent QR code image to {user_id}")
 
-    # If user just placed an order, schedule delayed "ready for pickup" notification
-    if engine.get_checkout_state(user_id) == "order_placed":
-        asyncio.create_task(send_order_ready(client, chat_id, user_id))
-        print(f"  -> Scheduled order ready notification for {user_id}")
+    # If user just placed an order, notify kitchen group
+    if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
+        kitchen_msg = engine.get_kitchen_order_message(user_id)
+        kitchen_markup = engine.get_kitchen_ready_button(user_id)
+        kitchen_chat = int(settings.kitchen_group_id)
+        await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
+        print(f"  -> Sent kitchen notification for {user_id}")
 
 
 async def main() -> None:

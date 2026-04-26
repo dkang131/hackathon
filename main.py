@@ -136,19 +136,41 @@ async def telegram_webhook(request: Request) -> JSONResponse:
                     ]
                 }
                 asyncio.create_task(_send_telegram_message(chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup))
-            # If user just placed an order, schedule delayed "ready for pickup" notification
-            if engine.get_checkout_state(user_id) == "order_placed":
-                asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+            # If user just placed an order, notify kitchen group
+            if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                asyncio.create_task(_send_telegram_message(kitchen_chat, kitchen_msg, reply_markup=kitchen_markup))
         elif callback_data.startswith("qr_scanned:"):
             reply = engine.confirm_qr_payment(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
-            # Schedule delayed "ready for pickup" notification
-            asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+            # Notify kitchen group
+            if settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                asyncio.create_task(_send_telegram_message(kitchen_chat, kitchen_msg, reply_markup=kitchen_markup))
         elif callback_data.startswith("va_paid:"):
             reply = engine.confirm_va_payment(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
-            # Schedule delayed "ready for pickup" notification
-            asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+            # Notify kitchen group
+            if settings.kitchen_group_id:
+                kitchen_msg = engine.get_kitchen_order_message(user_id)
+                kitchen_markup = engine.get_kitchen_ready_button(user_id)
+                kitchen_chat = int(settings.kitchen_group_id)
+                asyncio.create_task(_send_telegram_message(kitchen_chat, kitchen_msg, reply_markup=kitchen_markup))
+        elif callback_data.startswith("kitchen_ready:"):
+            reply = engine.kitchen_mark_ready(user_id)
+            if reply:
+                # Send pickup notification to user (user_id == chat_id for private chats)
+                user_chat = int(user_id)
+                pickup_markup = {
+                    "inline_keyboard": [
+                        [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+                    ]
+                }
+                asyncio.create_task(_send_telegram_message(user_chat, reply, reply_markup=pickup_markup))
         elif callback_data.startswith("order_add:"):
             asyncio.create_task(_send_telegram_message(chat_id, "What would you like to add?"))
         elif callback_data.startswith("order_checkout:"):
@@ -269,9 +291,12 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     if qr_path:
         asyncio.create_task(_send_telegram_photo(chat_id, qr_path))
 
-    # If user just placed an order, schedule delayed "ready for pickup" notification
-    if engine.get_checkout_state(user_id) == "order_placed":
-        asyncio.create_task(_send_order_ready_notification(chat_id, user_id))
+    # If user just placed an order, notify kitchen group
+    if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
+        kitchen_msg = engine.get_kitchen_order_message(user_id)
+        kitchen_markup = engine.get_kitchen_ready_button(user_id)
+        kitchen_chat = int(settings.kitchen_group_id)
+        asyncio.create_task(_send_telegram_message(kitchen_chat, kitchen_msg, reply_markup=kitchen_markup))
 
     return JSONResponse({"ok": True})
 

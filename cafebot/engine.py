@@ -228,7 +228,7 @@ class CafeBotEngine:
             return "Thank you for your feedback! We appreciate you taking the time to share your experience. See you next time!"
 
         # --- order confirmation handling (LLM recommendation follow-up) ---
-        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
+        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "lets do", "let's do", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
             state.order.append(OrderItem(state.last_recommended))
             state.last_recommended = None
             return (
@@ -257,6 +257,7 @@ class CafeBotEngine:
             drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
             if drink:
                 state.order.append(OrderItem(drink))
+                state.last_recommended = None  # clear previous recommendation
                 return (
                     f"{random.choice(_CONFIRMATIONS)}\n"
                     f"{self._render_order(state)}\n"
@@ -414,6 +415,33 @@ class CafeBotEngine:
             return "Hmm, I don't see a pending VA transfer."
         state.checkout_state = "order_placed"
         return "Your payment has been received! We'll notify you when your order is ready for pickup."
+
+    def get_kitchen_order_message(self, user_id: str) -> str:
+        """Format order details for the kitchen group."""
+        state = self._get_state(user_id)
+        if not state.order:
+            return ""
+        total = sum(i.drink.price * i.quantity for i in state.order)
+        lines = [f"🍽️ *New Order* — User: {state.user_name or user_id}"]
+        for i in state.order:
+            lines.append(f"• {i.quantity}× {i.drink.name}")
+        lines.append(f"_Total: ${total:.2f}_")
+        return "\n".join(lines)
+
+    def get_kitchen_ready_button(self, user_id: str) -> dict:
+        """Return inline keyboard for kitchen to mark order ready."""
+        return {
+            "inline_keyboard": [
+                [{"text": "✅ Mark as Ready", "callback_data": f"kitchen_ready:{user_id}"}]
+            ]
+        }
+
+    def kitchen_mark_ready(self, user_id: str) -> str:
+        """Mark order as ready by kitchen — returns message for user."""
+        state = self._get_state(user_id)
+        if state.checkout_state != "order_placed":
+            return ""
+        return "Great news! Your order is ready for pickup. Please confirm once you've received it!"
 
     def get_payment_qr_path(self, user_id: str) -> str | None:
         """Return QR code image path if user paid via QR."""
