@@ -42,3 +42,8 @@ class UserState:
     # Admin wizard state
     admin_wizard: str | None = None  # e.g. "add_drink"
     admin_wizard_data: dict = field(default_factory=dict)
+
+    # Feedback state
+    awaiting_feedback: bool = False
+    feedback_rating: int | None = None
+    feedback_history: list[str] = field(default_factory=list)

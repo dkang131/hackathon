@@ -34,7 +34,11 @@ async def send_message(client: httpx.AsyncClient, chat_id: int, text: str, reply
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": parse_mode}
         if i == len(chunks) - 1 and reply_markup:
             payload["reply_markup"] = reply_markup
-        await client.post(url, json=payload)
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            # Fallback: retry without parse_mode in case Markdown caused the error
+            payload.pop("parse_mode", None)
+            await client.post(url, json=payload)
 
 
 async def answer_callback(client: httpx.AsyncClient, callback_query_id: str) -> None:
@@ -85,6 +89,10 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             reply = engine.confirm_pickup(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> Pickup confirmed by {user_id}")
+            # Send rating buttons
+            rating_markup = engine.get_rating_buttons(user_id)
+            await send_message(client, chat_id, "How was your experience? Please rate us:", reply_markup=rating_markup)
+            print(f"  -> Sent rating buttons to {user_id}")
         elif data.startswith("payment:"):
             method = data.split(":", 1)[1]
             reply = await engine.chat(user_id, method)
@@ -146,6 +154,12 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
                 }
                 await send_message(client, chat_id, "Choose your payment method:", reply_markup=payment_markup)
                 print(f"  -> Sent payment buttons to {user_id}")
+        elif data.startswith("rating:"):
+            parts = data.split(":")
+            rating = int(parts[1])
+            reply = engine.save_rating(user_id, rating)
+            await send_message(client, chat_id, reply)
+            print(f"  -> Rating {rating}/5 received from {user_id}")
         # Remove buttons from the original message to prevent double-presses
         message_id = callback_query["message"]["message_id"]
         await edit_message_remove_buttons(client, chat_id, message_id)
@@ -193,6 +207,8 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             reply = "Access denied. This command is for the cafe owner only."
     elif lower == "/admin_reload":
         reply = engine.admin_reload_menu() if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
+    elif lower == "/admin_feedback":
+        reply = engine.admin_get_feedback() if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
     elif lower == "/admin_cancel":
         reply = engine.admin_cancel_wizard(user_id) if engine.is_owner(user_id) else "Access denied. This command is for the cafe owner only."
     else:

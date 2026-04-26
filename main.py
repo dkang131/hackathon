@@ -111,6 +111,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         if callback_data.startswith("pickup:"):
             reply = engine.confirm_pickup(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
+            # Send rating buttons
+            rating_markup = engine.get_rating_buttons(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, "How was your experience? Please rate us:", reply_markup=rating_markup))
         elif callback_data.startswith("payment:"):
             method = callback_data.split(":", 1)[1]
             reply = await engine.chat(user_id, method)
@@ -160,6 +163,11 @@ async def telegram_webhook(request: Request) -> JSONResponse:
                     ]
                 }
                 asyncio.create_task(_send_telegram_message(chat_id, "Choose your payment method:", reply_markup=payment_markup))
+        elif callback_data.startswith("rating:"):
+            parts = callback_data.split(":")
+            rating = int(parts[1])
+            reply = engine.save_rating(user_id, rating)
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
         # Remove buttons from the original message to prevent double-presses
         message_id = callback_query["message"]["message_id"]
         asyncio.create_task(_edit_telegram_remove_buttons(chat_id, message_id))
@@ -221,6 +229,12 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         else:
             reply = "Access denied. This command is for the cafe owner only."
 
+    elif text.lower() == "/admin_feedback":
+        if engine.is_owner(user_id):
+            reply = engine.admin_get_feedback()
+        else:
+            reply = "Access denied. This command is for the cafe owner only."
+
     elif text.lower() == "/admin_cancel":
         if engine.is_owner(user_id):
             reply = engine.admin_cancel_wizard(user_id)
@@ -278,7 +292,11 @@ async def _send_telegram_message(chat_id: int, text: str, reply_markup: dict | N
     if reply_markup:
         payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient() as client:
-        await client.post(url, json=payload)
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            # Fallback: retry without parse_mode in case Markdown caused the error
+            payload.pop("parse_mode", None)
+            await client.post(url, json=payload)
 
 
 async def _send_telegram_photo(chat_id: int, photo_path: str) -> None:

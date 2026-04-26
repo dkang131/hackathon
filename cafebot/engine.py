@@ -214,6 +214,19 @@ class CafeBotEngine:
         lang_code = state.lang_code
         lang_name = state.lang_name
 
+        # --- feedback handling ---
+        if state.awaiting_feedback:
+            state.feedback_history.append(message)
+            state.awaiting_feedback = False
+            if state.feedback_rating:
+                stars = "⭐" * state.feedback_rating
+                return (
+                    f"Thank you for your feedback!\n\n"
+                    f"Your rating: {stars} ({state.feedback_rating}/5)\n\n"
+                    "We appreciate you taking the time to share your experience. See you next time!"
+                )
+            return "Thank you for your feedback! We appreciate you taking the time to share your experience. See you next time!"
+
         # --- order confirmation handling (LLM recommendation follow-up) ---
         if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
             state.order.append(OrderItem(state.last_recommended))
@@ -221,7 +234,7 @@ class CafeBotEngine:
             return (
                 f"{random.choice(_CONFIRMATIONS)}\n"
                 f"{self._render_order(state)}\n"
-                "Want to add another drink, or say *checkout* to pay?"
+                # "Want to add another drink, or say *checkout* to pay?"
             )
 
         # --- payment selection during checkout ---
@@ -247,7 +260,7 @@ class CafeBotEngine:
                 return (
                     f"{random.choice(_CONFIRMATIONS)}\n"
                     f"{self._render_order(state)}\n"
-                    "Want to add another drink, or say *checkout* to pay?"
+                    # "Want to add another drink, or say *checkout* to pay?"
                 )
             return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
@@ -421,7 +434,34 @@ class CafeBotEngine:
         state.checkout_state = None
         state.payment_method = None
         state.paid_amount = 0.0
+        state.awaiting_feedback = True
+        state.feedback_rating = None
         return "Enjoy your drinks! Thanks for visiting CafeMate. Come back soon!"
+
+    def save_rating(self, user_id: str, rating: int) -> str:
+        """Save user rating and prompt for optional comment."""
+        state = self._get_state(user_id)
+        state.feedback_rating = rating
+        state.feedback_history.append(f"Rating: {rating}/5")
+        stars = "⭐" * rating
+        return (
+            f"Thank you for rating us {stars} ({rating}/5)!\n\n"
+            "Feel free to share any comments about your experience, or just say *done* to finish."
+        )
+
+    def get_rating_buttons(self, user_id: str) -> dict:
+        """Return inline keyboard for 1-5 star rating."""
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "1 ⭐", "callback_data": f"rating:1:{user_id}"},
+                    {"text": "2 ⭐", "callback_data": f"rating:2:{user_id}"},
+                    {"text": "3 ⭐", "callback_data": f"rating:3:{user_id}"},
+                    {"text": "4 ⭐", "callback_data": f"rating:4:{user_id}"},
+                    {"text": "5 ⭐", "callback_data": f"rating:5:{user_id}"},
+                ]
+            ]
+        }
 
     async def farewell(self, user_id: str) -> str:
         state = self._get_state(user_id)
@@ -446,6 +486,7 @@ class CafeBotEngine:
             "  /admin_add           - Add a drink (conversational wizard)\n"
             "  /admin_remove <name> - Remove a drink by name\n"
             "  /admin_reload        - Reload menu from file\n"
+            "  /admin_feedback      - View all user feedback\n"
             "  /admin_cancel        - Cancel current wizard\n"
             "  ----------------------\n"
             "\n  To add a drink easily, just type /admin_add and follow the prompts."
@@ -463,6 +504,24 @@ class CafeBotEngine:
             lines.append(f"     {d.description}")
             lines.append(f"     Moods: {', '.join(d.moods)}")
         lines.append("  -------------------------\n")
+        return "\n".join(lines)
+
+    def admin_get_feedback(self) -> str:
+        """Collect and format all user feedback for the owner."""
+        if not self._users:
+            return "No users have interacted with the bot yet."
+        lines = ["\n  --- User Feedback ---"]
+        has_feedback = False
+        for uid, state in self._users.items():
+            if state.feedback_history:
+                has_feedback = True
+                name = state.user_name or uid
+                lines.append(f"\n  User: {name} (ID: {uid})")
+                for entry in state.feedback_history:
+                    lines.append(f"    • {entry}")
+        if not has_feedback:
+            lines.append("  No feedback collected yet.")
+        lines.append("  ---------------------\n")
         return "\n".join(lines)
 
     def admin_add_drink(self, json_str: str) -> str:
