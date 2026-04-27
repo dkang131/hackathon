@@ -2,30 +2,57 @@
 
 ## Prerequisites
 
-- Azure subscription (free tier works)
+- Azure subscription ([free tier](https://azure.microsoft.com/free/) works)
 - Azure CLI installed: https://docs.microsoft.com/cli/azure/install-azure-cli
-- Your code pushed to GitHub (recommended) or local Git
+- Your code pushed to GitHub (recommended)
 
 ---
 
-## Step 1: Create Resources (One-time)
+## Step 1: Prepare Your Code
+
+### 1.1 Environment Variables
+
+Copy `.env.example` to `.env` for local testing:
+```bash
+cp .env.example .env
+```
+
+**Do NOT commit `.env` to git.** Azure will use Application Settings instead.
+
+### 1.2 Required Files for Azure
+
+Make sure these files exist in your repo:
+- `pyproject.toml` — Python dependencies
+- `requirements.txt` — Fallback for Azure's pip-based build
+- `startup.sh` — Startup command for Linux App Service
+
+They should already be there. If `requirements.txt` is missing:
+```bash
+uv pip freeze > requirements.txt
+```
+
+---
+
+## Step 2: Create Azure Resources
 
 ### Option A: Azure Portal (GUI)
 
 1. **Azure App Service**
    - Portal → Create a resource → Web App
-   - Name: `cafemate-bot` (globally unique)
+   - Name: `cafemate-bot` (globally unique, becomes your URL)
    - Runtime: Python 3.13
-   - Region: Southeast Asia
-   - Plan: Free F1 (testing) or Basic B1 ($13/mo)
+   - Region: Southeast Asia (or closest to your users)
+   - Plan: Free F1 (testing) or Basic B1 ($13/mo for production)
 
-2. **Azure Blob Storage** (optional, for menu images)
+2. **Azure Blob Storage** (optional — for persistent menu/feedback data)
    - Portal → Create a resource → Storage account
-   - Name: `cafematestorage` (lowercase, unique)
+   - Name: `cafematestorage` (lowercase, globally unique)
    - Performance: Standard
-   - Create container: `menu-images`
+   - Create container: `menu-images` (for drink photos)
 
 ### Option B: Azure CLI (Faster)
+
+Open PowerShell or Bash and run:
 
 ```bash
 # Login
@@ -56,49 +83,49 @@ az storage account create \
   --sku Standard_LRS
 ```
 
+Your app URL will be: `https://cafemate-bot.azurewebsites.net`
+
 ---
 
-## Step 2: Configure Environment Variables
+## Step 3: Configure Environment Variables in Azure
 
 In Azure Portal:
 1. Go to your Web App → **Settings** → **Configuration** → **Application settings**
 2. Click **+ New application setting** for each:
 
-| Setting Name | Value | Source |
+| Setting Name | Example Value | Where to get it |
 |---|---|---|
-| `AZURE_OPENAI_ENDPOINT` | `https://your-resource.openai.azure.com/` | Azure OpenAI |
-| `AZURE_OPENAI_API_KEY` | `your-key` | Azure OpenAI |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | `your-deployment` | Azure OpenAI |
-| `TELEGRAM_BOT_TOKEN` | `your-bot-token` | @BotFather |
-| `OWNER_TELEGRAM_ID` | `5832177797` | @userinfobot |
-| `KITCHEN_GROUP_ID` | `-1234567890` | Your kitchen group |
-| `WEBHOOK_SECRET` | `random-secret-string` | Generate yourself |
-| `WEBHOOK_URL` | `https://cafemate-bot.azurewebsites.net/webhook` | Your app URL |
+| `AZURE_OPENAI_ENDPOINT` | `https://your-resource.openai.azure.com/` | Azure OpenAI resource |
+| `AZURE_OPENAI_API_KEY` | `your-key` | Azure OpenAI → Keys |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | `gpt-4o` | Azure OpenAI → Deployments |
+| `TELEGRAM_BOT_TOKEN` | `123456:ABC...` | @BotFather |
+| `OWNER_TELEGRAM_ID` | `5832177797` | Message @userinfobot |
+| `KITCHEN_GROUP_ID` | `-1003904000032` | Your kitchen group |
+| `WEBHOOK_SECRET` | `random-secret-123` | Generate yourself |
+| `WEBHOOK_URL` | `https://cafemate-bot.azurewebsites.net/webhook` | Your app URL + `/webhook` |
 
 3. Click **Save** (this restarts the app)
 
-**Security tip:** For production, use Azure Key Vault instead of plain app settings.
+**Security tip:** Never put secrets in code. Azure Application Settings are encrypted at rest.
 
 ---
 
-## Step 3: Deploy the Code
+## Step 4: Deploy the Code
 
-### Option A: Deploy from GitHub (Recommended)
+### Option A: GitHub Deployment (Recommended)
 
-1. Push your code to GitHub
+1. Push your code to a GitHub repo
 2. Azure Portal → Your Web App → **Deployment** → **Deployment Center**
-3. Source: GitHub
-4. Sign in and select your repo/branch
-5. Azure auto-builds and deploys on every push
+3. Source: GitHub → Sign in → Select your repo/branch
+4. Azure auto-builds and deploys on every push
 
-### Option B: Deploy with Azure CLI + ZIP
+### Option B: ZIP Deploy (Quick test)
 
 ```bash
-# From your project directory
 cd d:\hackathon
 
-# Create ZIP (exclude .venv, .git, etc.)
-7z a -r deploy.zip . -x!.venv -x!.git -x!data\*.png -x!__pycache__
+# Create ZIP (exclude venv, git, data files)
+7z a -r deploy.zip . -x!.venv -x!.git -x!__pycache__ -x!*.pyc
 
 # Deploy
 az webapp deployment source config-zip \
@@ -109,48 +136,72 @@ az webapp deployment source config-zip \
 
 ### Option C: VS Code Extension
 
-1. Install **Azure App Service** extension in VS Code
+1. Install **Azure App Service** extension
 2. Sign in to Azure
 3. Right-click your app → **Deploy to Web App**
 
 ---
 
-## Step 4: Configure Startup Command
+## Step 5: Configure Startup Command
 
-Azure needs to know how to start your FastAPI app:
+Azure needs to know how to start your app:
 
 1. Portal → Your Web App → **Settings** → **Configuration** → **General settings**
-2. **Startup Command**: `uv run uvicorn main:app --host 0.0.0.0 --port 8000`
+2. **Startup Command**: `bash startup.sh`
 3. Click **Save**
 
-**Note:** If `uv` is not available in Azure's build, use this instead:
-```
-python -m pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000
-```
+The `startup.sh` script tries `uv` first, then falls back to `pip` + `uvicorn`.
 
 ---
 
-## Step 5: Set Telegram Webhook
+## Step 6: Set Telegram Webhook
 
 Once deployed, tell Telegram where to send updates:
 
 ```bash
-# Replace with your actual bot token and Azure URL
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://cafemate-bot.azurewebsites.net/webhook&secret_token=your-webhook-secret"
+# Replace with your actual values
+BOT_TOKEN="your-bot-token"
+WEBHOOK_URL="https://cafemate-bot.azurewebsites.net/webhook"
+SECRET="your-webhook-secret"
+
+curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${WEBHOOK_URL}&secret_token=${SECRET}"
 ```
 
-Verify webhook is set:
+Verify:
 ```bash
-curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
+curl "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
 ```
+
+You should see `"url": "https://cafemate-bot.azurewebsites.net/webhook"` and `"has_custom_certificate": false`.
 
 ---
 
-## Step 6: Test Your Deployed Bot
+## Step 7: Test Your Deployed Bot
 
-1. Open Telegram and message your bot: `/start`
+1. Open Telegram → message your bot: `/start`
 2. Check logs: Azure Portal → Your Web App → **Monitoring** → **Log stream**
 3. Health check: `curl https://cafemate-bot.azurewebsites.net/health`
+
+---
+
+## Important: Data Persistence
+
+**Azure App Service's local filesystem is NOT persistent.** When the app restarts (happens daily on Free tier), files in `data/menu.json` and `data/feedback.json` will be lost.
+
+### Solutions:
+
+**Option A: Use Azure Blob Storage (Recommended for production)**
+- Store `menu.json` and `feedback.json` in Blob Storage
+- Modify `menu_manager.py` and `feedback_manager.py` to read/write from Blob
+
+**Option B: Mount Azure Files (Simplest)**
+- Portal → Your Web App → **Settings** → **Configuration** → **Path mappings**
+- Mount an Azure File Share to `/home/data`
+- Update your code to use `/home/data/` instead of `./data/`
+
+**Option C: Reload menu after each restart**
+- Use `/admin_reload` command after deployments
+- Accept that feedback history resets (not ideal)
 
 ---
 
@@ -158,26 +209,12 @@ curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
 
 | Problem | Solution |
 |---|---|
-| `ModuleNotFoundError` | Make sure `pyproject.toml` is deployed; Azure reads it |
-| App won't start | Check startup command in Configuration > General settings |
-| Telegram not receiving | Verify webhook URL is correct and HTTPS |
-| 403 Forbidden | Check `OWNER_TELEGRAM_ID` and `WEBHOOK_SECRET` match |
-| Build fails | Azure may not support `uv` — switch to `pip` + `requirements.txt` |
-
----
-
-## Switching from `uv` to `pip` for Azure
-
-If Azure's build doesn't support `uv`, create a `requirements.txt`:
-
-```bash
-uv pip freeze > requirements.txt
-```
-
-And update startup command to:
-```
-pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000
-```
+| `ModuleNotFoundError` | Azure reads `pyproject.toml` or `requirements.txt`. Make sure both are committed. |
+| App won't start | Check **Log stream** for errors. Verify startup command is `bash startup.sh`. |
+| Telegram not receiving | Verify webhook URL is correct and HTTPS. Check `getWebhookInfo`. |
+| 401/403 errors | Check `OWNER_TELEGRAM_ID` and `WEBHOOK_SECRET` match between code and Azure settings. |
+| Build fails | If `uv` isn't available, Azure falls back to `pip`. Check `requirements.txt` is present. |
+| Data lost after restart | See **Data Persistence** section above. Use Azure Files or Blob Storage. |
 
 ---
 
@@ -189,5 +226,24 @@ pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000
 | App Service (B1) | — | ~$13/month |
 | Azure OpenAI | Pay-per-use | Pay-per-use |
 | Blob Storage | 5GB free | ~$0.02/GB/month |
+| Azure Files | — | ~$0.06/GB/month |
 
 **Total for production:** ~$15-30/month depending on usage.
+
+---
+
+## Quick Reference
+
+```bash
+# View logs
+az webapp log tail --name cafemate-bot --resource-group rg-cafemate
+
+# Restart app
+az webapp restart --name cafemate-bot --resource-group rg-cafemate
+
+# Update a single app setting
+az webapp config appsettings set \
+  --name cafemate-bot \
+  --resource-group rg-cafemate \
+  --settings KEY=value
+```

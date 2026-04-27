@@ -11,3 +11,10 @@ wheels/
 
 # Env
 .env
+
+# Deployment artifacts
+deploy.zip
+
+# Local data (generated at runtime)
+data/qr_*.png
+data/feedback.json
