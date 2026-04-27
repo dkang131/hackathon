@@ -204,7 +204,7 @@ class CafeBotEngine:
                 if user_name
                 else "Say a warm, friendly greeting to a new customer. "
             ) + "Ask how they're doing today."
-            reply, detected_lang = await self._llm.chat(
+            reply, detected_lang, _intent, _drink = await self._llm.chat(
                 greet_prompt,
                 state.conversation_history,
                 user_name=user_name,
@@ -226,7 +226,6 @@ class CafeBotEngine:
         state = self._get_state(user_id)
         if name:
             state.user_name = name
-        lower = message.lower()
 
         # Detect and cache user language from their message
         detected = detect_language_simple(message)
@@ -249,68 +248,61 @@ class CafeBotEngine:
                 )
             return t("thanks_feedback", lang)
 
-        # --- order confirmation handling (LLM recommendation follow-up) ---
-        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "lets do", "let's do", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it", "boleh", "iya", "ya", "mau", "baik", "setuju", "gas", "oke"]):
-            state.order.append(OrderItem(state.last_recommended))
-            state.last_recommended = None
-            return (
-                f"{t('confirmation', lang)}\n"
-                f"{self._render_order(state)}\n"
-            )
-
         # --- payment selection during checkout ---
         if state.checkout_state == "awaiting_payment":
             return await self._handle_payment(user_id, message)
 
-        # --- built-in commands ---
-        if any(kw in lower for kw in ["menu", "what do you have", "what's available", "drinks"]):
-            return self._render_menu(lang)
-
-        if any(kw in lower for kw in ["my order", "what did i order", "show order"]):
-            return self._render_order(state)
-
-        # --- detect natural checkout/payment intent ---
-        if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish", "let's pay", "lets pay", "proceed to payment", "ready to pay", "i'm done", "im done", "all set", "wrap it up", "bill please", "itu aja", "sudah", "selesai", "cukup", "bayar", "sudah selesai", "mau bayar"]):
-            return await self._checkout(user_id)
-
-        # --- remove drink from order ---
-        if any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "cancel", "batal", "kurangi", "kurang"]):
-            to_remove = self._try_parse_order(message)
-            if to_remove:
-                drink = next((d for d in DRINK_MENU if d.name.lower() == to_remove.lower()), None)
-                if drink:
-                    for i, item in enumerate(state.order):
-                        if item.drink.name.lower() == drink.name.lower():
-                            state.order.pop(i)
-                            return (
-                                f"{t('removed', lang, name=drink.name)}\n"
-                                f"{self._render_order(state)}\n"
-                            )
-                    return f"{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
-
-        # --- skip auto-ordering for questions ---
-        is_question = "?" in message or any(kw in lower for kw in ["apa itu", "what is", "what's", "how is", "how are", "bagaimana", "berapa", "why", "kenapa", "explain", "jelaskan"])
-        if not is_question:
-            ordered = self._try_parse_order(message)
-            if ordered:
-                drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
-                if drink:
-                    state.order.append(OrderItem(drink))
-                    state.last_recommended = None  # clear previous recommendation
-                    return (
-                        f"{t('confirmation', lang)}\n"
-                        f"{self._render_order(state)}\n"
-                    )
-                return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
-
-        # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
+        # --- LLM intent classification + routing ---
         if self._llm.available:
-            reply, detected_lang = await self._llm.chat(message, state.conversation_history, user_name=state.user_name, lang_hint=lang)
+            reply, detected_lang, intent, drink_name = await self._llm.chat(
+                message, state.conversation_history, user_name=state.user_name, lang_hint=lang
+            )
             if reply:
                 if detected_lang:
                     state.lang_hint = detected_lang
+                    lang = detected_lang
+
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
+
+                # Route based on LLM-classified intent
+                if intent == "agree" and state.last_recommended:
+                    state.order.append(OrderItem(state.last_recommended))
+                    state.last_recommended = None
+                    return f"{reply}\n\n{self._render_order(state)}\n"
+
+                if intent == "order":
+                    target_drink = drink_name or self._try_parse_order(message)
+                    if target_drink:
+                        drink = next((d for d in DRINK_MENU if d.name.lower() == target_drink.lower()), None)
+                        if drink:
+                            state.order.append(OrderItem(drink))
+                            state.last_recommended = None
+                            return f"{reply}\n\n{self._render_order(state)}\n"
+                    return reply
+
+                if intent == "remove":
+                    target_drink = drink_name or self._try_parse_order(message)
+                    if target_drink:
+                        drink = next((d for d in DRINK_MENU if d.name.lower() == target_drink.lower()), None)
+                        if drink:
+                            for i, item in enumerate(state.order):
+                                if item.drink.name.lower() == drink.name.lower():
+                                    state.order.pop(i)
+                                    return f"{reply}\n\n{self._render_order(state)}\n"
+                            return f"{reply}\n\n{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
+                    return reply
+
+                if intent == "show_menu":
+                    return reply  # LLM generates conversational menu response
+
+                if intent == "show_order":
+                    return f"{reply}\n\n{self._render_order(state)}"
+
+                if intent == "checkout":
+                    return await self._checkout(user_id)
+
+                # Default / chat intent — set last_recommended if LLM mentions a drink
                 for drink in DRINK_MENU:
                     if drink.name.lower() in reply.lower():
                         state.last_recommended = drink

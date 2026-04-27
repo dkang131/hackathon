@@ -58,11 +58,29 @@ class AzureLLMClient:
             "But all other text (greetings, explanations, friendly banter) must be in the user's detected language. "
             "LANGUAGE FORMAT: You MUST begin EVERY response with a language tag in this exact format: [LANG:xx] where xx is the ISO 639-1 code of the language you are using (en, id, zh, ja, ko, or es). "
             "Example: [LANG:id] Halo! Senang bertemu denganmu. "
-            "This tag helps the system route your response correctly. Do not forget it. "
-            "IMPORTANT: When a user explicitly mentions a drink by name, the system will add it to their order. "
-            "If you recommend a drink and they agree with words like 'sure', 'ok', or 'yes', the system will also add it. "
-            "After a drink is added, acknowledge it warmly and show their current order. "
-            "If they want to finish and pay, they can say things like 'I'm done', 'let's pay', or 'checkout' and the system will handle it. "
+            "INTENT FORMAT: Immediately after the language tag, you MUST include an intent tag in this exact format: [INTENT:xxx|DRINK:yyy] where: "
+            "- xxx is the intent: agree, order, remove, show_menu, show_order, checkout, or chat. "
+            "- yyy is the drink name ONLY for order and remove intents. Omit |DRINK:yyy if not applicable. "
+            "Intent definitions: "
+            "- agree: user agrees to a drink you just recommended (e.g., 'sure', 'yes', 'ok', 'boleh'). "
+            "- order: user explicitly asks for a specific drink by name (e.g., 'I want a Matcha Latte'). "
+            "- remove: user wants to remove a drink from their order (e.g., 'remove the Americano'). "
+            "- show_menu: user wants to see the menu (e.g., 'what do you have', 'show me the menu'). "
+            "- show_order: user wants to see their current order (e.g., 'my order', 'what did I order'). "
+            "- checkout: user wants to finish and pay (e.g., 'I'm done', 'checkout', 'let's pay'). "
+            "- chat: general conversation, questions, greetings, mood sharing, or anything else. "
+            "Examples: "
+            "[LANG:id][INTENT:agree] Pilihan yang bagus! Sudah aku tambahkan. "
+            "[LANG:en][INTENT:order|DRINK:Matcha Latte] Great choice! Added Matcha Latte to your order. "
+            "[LANG:en][INTENT:remove|DRINK:Americano] Removed Americano from your order. "
+            "[LANG:id][INTENT:show_menu] Ini menu kita hari ini... "
+            "[LANG:en][INTENT:show_order] Here's your current order: "
+            "[LANG:en][INTENT:checkout] Ready to finish up? Here's your order. "
+            "[LANG:id][INTENT:chat] Chai Latte adalah teh rempah dengan susu... "
+            "These tags help the system route your response correctly. Do not forget them. "
+            "IMPORTANT: When a user explicitly mentions a drink or agrees to one you recommended, the system will add it to their order. "
+            "After a drink is added or removed, acknowledge it warmly and show their current order. "
+            "If they want to finish and pay, use the checkout intent and the system will handle it. "
             "Guide them naturally: after adding a drink, ask if they want anything else or if they're ready to pay."
         )
 
@@ -75,6 +93,17 @@ class AzureLLMClient:
             return text[match.end():], match.group(1).lower()
         return text, None
 
+    @staticmethod
+    def _parse_intent_tag(text: str) -> tuple[str, str | None, str | None]:
+        """Strip [INTENT:xxx|DRINK:yyy] and return (clean_text, intent, drink_name)."""
+        import re
+        match = re.match(r"^\[INTENT:([a-z_]+)\](?:\[DRINK:([^\]]+)\])?\s*", text, re.IGNORECASE)
+        if match:
+            intent = match.group(1).lower()
+            drink = match.group(2)
+            return text[match.end():], intent, drink
+        return text, None, None
+
     async def chat(
         self,
         message: str,
@@ -83,10 +112,10 @@ class AzureLLMClient:
         system_override: str | None = None,
         max_tokens: int = 150,
         lang_hint: str = "en",
-    ) -> tuple[str, str | None]:
-        """Returns (reply_text, detected_lang_code). detected_lang_code is None on failure."""
+    ) -> tuple[str, str | None, str | None, str | None]:
+        """Returns (reply_text, detected_lang_code, intent, drink_name). All extras are None on failure."""
         if not self._client:
-            return "", None
+            return "", None, None, None
         system_prompt = system_override if system_override else self._system_prompt(user_name, lang_hint)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
@@ -99,8 +128,10 @@ class AzureLLMClient:
                 max_tokens=max_tokens,
             )
             raw = response.choices[0].message.content or ""
-            return self._parse_lang_tag(raw)
+            reply, detected_lang = self._parse_lang_tag(raw)
+            reply, intent, drink = self._parse_intent_tag(reply)
+            return reply, detected_lang, intent, drink
         except Exception as e:
             # Silently fail so engine falls back to local mode
             logging.debug("Azure LLM error: %s", e)
-            return "", None
+            return "", None, None, None
