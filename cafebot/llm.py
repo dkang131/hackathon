@@ -63,10 +63,13 @@ class AzureLLMClient:
         message: str,
         history: list[dict],
         user_name: str | None = None,
+        system_override: str | None = None,
+        max_tokens: int = 150,
     ) -> str:
         if not self._client:
             return ""
-        messages = [{"role": "system", "content": self._system_prompt(user_name)}]
+        system_prompt = system_override if system_override else self._system_prompt(user_name)
+        messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         try:
@@ -74,7 +77,7 @@ class AzureLLMClient:
                 model=settings.azure_openai_deployment_name,
                 messages=messages,
                 temperature=0.9,
-                max_tokens=150,
+                max_tokens=max_tokens,
             )
             return response.choices[0].message.content or ""
         except Exception as e:

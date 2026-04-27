@@ -9,6 +9,7 @@ from .menu_manager import load_menu, save_menu
 from .llm import AzureLLMClient
 from .config import settings
 from .feedback_manager import add_feedback, get_feedback_summary, update_last_feedback_comment
+from .i18n import detect_language_simple, t
 
 # ---- Friendly response pools ----
 _GREETINGS = [
@@ -135,9 +136,13 @@ class CafeBotEngine:
             f"  Price: ${drink.price:.2f}"
         )
 
+    def _get_lang(self, user_id: str) -> str:
+        """Return cached language hint for user."""
+        return self._get_state(user_id).lang_hint
+
     @staticmethod
-    def _render_menu() -> str:
-        lines = ["☕ *Our Menu*"]
+    def _render_menu(lang: str = "en") -> str:
+        lines = [t("menu_title", lang)]
         for d in DRINK_MENU:
             lines.append(f"• {d.name} — ${d.price:.2f} ({d.caffeine_level} caffeine, {d.temperature})")
         lines.append("")
@@ -145,21 +150,36 @@ class CafeBotEngine:
 
     @staticmethod
     def _render_order(state: UserState) -> str:
+        lang = state.lang_hint
         if not state.order:
-            return "Your order's empty right now. Let's fix that!"
+            return t("order_empty", lang)
         total = sum(i.drink.price * i.quantity for i in state.order)
-        lines = ["🧾 *Your Order*"]
+        lines = [t("order_title", lang)]
         for i in state.order:
             lines.append(f"• {i.quantity}× {i.drink.name} — ${i.drink.price * i.quantity:.2f}")
-        lines.append(f"_Total: ${total:.2f}_")
+        lines.append(t("total", lang, total=total))
         lines.append("")
         return "\n".join(lines)
 
     @staticmethod
     def _try_parse_order(text: str) -> str | None:
         lower = text.lower()
+        # Exact substring match first
         for drink in DRINK_MENU:
             if drink.name.lower() in lower:
+                return drink.name
+        # Fuzzy match: every drink word must match a text word (substring in either direction)
+        text_words = lower.split()
+        for drink in DRINK_MENU:
+            drink_words = drink.name.lower().split()
+            matched = 0
+            for dw in drink_words:
+                for tw in text_words:
+                    if dw in tw or tw in dw:
+                        if len(tw) >= 3 or len(dw) >= 3:
+                            matched += 1
+                            break
+            if matched >= len(drink_words) * 0.6:
                 return drink.name
         return None
 
@@ -175,7 +195,7 @@ class CafeBotEngine:
             f"User: {user_name}" if user_name else "",
             f"Azure OpenAI: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
             f"Menu items: {len(DRINK_MENU)}",
-            "Languages: Indonesian, Chinese, Japanese, Korean, English, Spanish, French, and more!",
+            "Available Languages: Indonesian, Chinese, Japanese, Korean, English, Spanish",
             "",
         ]
         if self._llm.available:
@@ -205,31 +225,34 @@ class CafeBotEngine:
             state.user_name = name
         lower = message.lower()
 
+        # Detect and cache user language from their message
+        detected = detect_language_simple(message)
+        if detected != "en":
+            state.lang_hint = detected
+        lang = state.lang_hint
+
         # --- feedback handling ---
         if state.awaiting_feedback:
             state.feedback_history.append(message)
             state.awaiting_feedback = False
-            # Update the persisted feedback entry with the user's comment
             comment = message.strip()
-            if comment.lower() not in ("done", "no", "none", "n/a", "-"):
+            if comment.lower() not in ("done", "no", "none", "n/a", "-", "selesai", "完成", "完了", "완료"):
                 update_last_feedback_comment(user_id, comment)
             if state.feedback_rating:
                 stars = "⭐" * state.feedback_rating
                 return (
-                    f"Thank you for your feedback!\n\n"
-                    f"Your rating: {stars} ({state.feedback_rating}/5)\n\n"
-                    "We appreciate you taking the time to share your experience. See you next time!"
+                    f"{t('thanks_feedback', lang)}\n\n"
+                    f"Rating: {stars} ({state.feedback_rating}/5)"
                 )
-            return "Thank you for your feedback! We appreciate you taking the time to share your experience. See you next time!"
+            return t("thanks_feedback", lang)
 
         # --- order confirmation handling (LLM recommendation follow-up) ---
         if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "lets do", "let's do", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
             state.order.append(OrderItem(state.last_recommended))
             state.last_recommended = None
             return (
-                f"{random.choice(_CONFIRMATIONS)}\n"
+                f"{t('confirmation', lang)}\n"
                 f"{self._render_order(state)}\n"
-                # "Want to add another drink, or say *checkout* to pay?"
             )
 
         # --- payment selection during checkout ---
@@ -238,7 +261,7 @@ class CafeBotEngine:
 
         # --- built-in commands ---
         if any(kw in lower for kw in ["menu", "what do you have", "what's available", "drinks"]):
-            return self._render_menu()
+            return self._render_menu(lang)
 
         if any(kw in lower for kw in ["my order", "what did i order", "show order"]):
             return self._render_order(state)
@@ -254,9 +277,8 @@ class CafeBotEngine:
                 state.order.append(OrderItem(drink))
                 state.last_recommended = None  # clear previous recommendation
                 return (
-                    f"{random.choice(_CONFIRMATIONS)}\n"
+                    f"{t('confirmation', lang)}\n"
                     f"{self._render_order(state)}\n"
-                    # "Want to add another drink, or say *checkout* to pay?"
                 )
             return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
@@ -266,7 +288,6 @@ class CafeBotEngine:
             if reply:
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
-                # Track if LLM recommended a drink so follow-up "sure/yes" can trigger order confirmation
                 for drink in DRINK_MENU:
                     if drink.name.lower() in reply.lower():
                         state.last_recommended = drink
@@ -311,29 +332,26 @@ class CafeBotEngine:
 
     async def _checkout(self, user_id: str) -> str:
         state = self._get_state(user_id)
+        lang = state.lang_hint
         if not state.order:
-            return "You haven't ordered anything yet! Let's pick something out first."
+            return t("no_order", lang)
         if state.checkout_state == "awaiting_payment":
             return (
                 f"{self._render_order(state)}\n"
-                "Please choose a payment method:\n"
-                "  1. Virtual Account (VA)\n"
-                "  2. QR Code"
+                f"{t('choose_payment', lang)}"
             )
-        total = sum(i.drink.price * i.quantity for i in state.order)
         receipt = self._render_order(state)
         state.checkout_state = "awaiting_payment"
-        return (
-            f"{receipt}\n"
-        )
+        return f"{receipt}\n"
 
     async def _handle_payment(self, user_id: str, message: str) -> str:
         """Handle payment selection — now button-driven, but callbacks route through here."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         selected = message.strip().lower()
 
         if selected not in ("va", "qr"):
-            return "Please use the payment buttons above to choose your method."
+            return t("choose_payment", lang)
 
         total = sum(i.drink.price * i.quantity for i in state.order)
         state.payment_method = selected.upper()
@@ -343,18 +361,15 @@ class CafeBotEngine:
             state.checkout_state = "awaiting_va_transfer"
             va_number = self._generate_va_number(user_id)
             return (
-                f"Total: ${total:.2f}\n\n"
-                f"Please transfer to this Virtual Account:\n"
-                f"  `{va_number}`\n\n"
-                f"Tap *I've Paid* once you're done!"
+                f"{t('total', lang, total=total)}\n\n"
+                f"{t('pay_va', lang, va=va_number)}"
             )
         # QR
         state.checkout_state = "awaiting_qr_scan"
         qr_path = self._generate_qr_code(user_id, total)
         return (
-            f"Total: ${total:.2f}\n\n"
-            f"Please scan the QR code below to pay. "
-            f"Tap *I've Scanned* once you're done!"
+            f"{t('total', lang, total=total)}\n\n"
+            f"{t('pay_qr', lang)}"
         )
 
     async def checkout(self, user_id: str) -> str:
@@ -364,12 +379,13 @@ class CafeBotEngine:
     def get_order_action_buttons(self, user_id: str) -> dict | None:
         """Return Add Another / Checkout buttons if user has items and isn't in checkout flow."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         if state.order and state.checkout_state is None and not state.last_recommended:
             return {
                 "inline_keyboard": [
                     [
-                        {"text": "☕ Add Another Drink", "callback_data": f"order_add:{user_id}"},
-                        {"text": "💳 Checkout", "callback_data": f"order_checkout:{user_id}"},
+                        {"text": t("add_another", lang), "callback_data": f"order_add:{user_id}"},
+                        {"text": t("checkout_btn", lang), "callback_data": f"order_checkout:{user_id}"},
                     ]
                 ]
             }
@@ -378,18 +394,20 @@ class CafeBotEngine:
     def confirm_qr_payment(self, user_id: str) -> str:
         """Confirm QR payment scan and move to order_placed state."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         if state.checkout_state != "awaiting_qr_scan":
             return "Hmm, I don't see a pending QR payment."
         state.checkout_state = "order_placed"
-        return "Your payment has been received! We'll notify you when your order is ready for pickup."
+        return t("payment_received", lang)
 
     def confirm_va_payment(self, user_id: str) -> str:
         """Confirm VA payment transfer and move to order_placed state."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         if state.checkout_state != "awaiting_va_transfer":
             return "Hmm, I don't see a pending VA transfer."
         state.checkout_state = "order_placed"
-        return "Your payment has been received! We'll notify you when your order is ready for pickup."
+        return t("payment_received", lang)
 
     def get_kitchen_order_message(self, user_id: str) -> str:
         """Format order details for the kitchen group."""
@@ -414,9 +432,10 @@ class CafeBotEngine:
     def kitchen_mark_ready(self, user_id: str) -> str:
         """Mark order as ready by kitchen — returns message for user."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         if state.checkout_state != "order_placed":
             return ""
-        return "Great news! Your order is ready for pickup. Please confirm once you've received it!"
+        return t("order_ready", lang)
 
     def get_payment_qr_path(self, user_id: str) -> str | None:
         """Return QR code image path if user paid via QR."""
@@ -433,17 +452,19 @@ class CafeBotEngine:
     def confirm_pickup(self, user_id: str) -> str:
         """Mark order as picked up and clear state."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         state.order = []
         state.checkout_state = None
         state.payment_method = None
         state.paid_amount = 0.0
         state.awaiting_feedback = True
         state.feedback_rating = None
-        return "Enjoy your drinks! Thanks for visiting CafeMate. Come back soon!"
+        return t("enjoy", lang)
 
     def save_rating(self, user_id: str, rating: int) -> str:
         """Save user rating to persistent JSON storage and prompt for optional comment."""
         state = self._get_state(user_id)
+        lang = state.lang_hint
         state.feedback_rating = rating
         state.feedback_history.append(f"Rating: {rating}/5")
         # Persist to JSON immediately
@@ -455,8 +476,9 @@ class CafeBotEngine:
         )
         stars = "⭐" * rating
         return (
-            f"Thank you for rating us {stars} ({rating}/5)!\n\n"
-            "Feel free to share any comments about your experience, or just say *done* to finish."
+            f"{t('thanks_feedback', lang)}\n\n"
+            f"Rating: {stars} ({rating}/5)\n\n"
+            f"{t('rate_comment', lang)}"
         )
 
     def get_rating_buttons(self, user_id: str) -> dict:

@@ -45,3 +45,6 @@ class UserState:
     awaiting_feedback: bool = False
     feedback_rating: int | None = None
     feedback_history: list[str] = field(default_factory=list)
+
+    # Language hint for localized order forms
+    lang_hint: str = "en"

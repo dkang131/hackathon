@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from cafebot import CafeBotEngine, settings
 from cafebot.menu import DRINK_MENU
+from cafebot.i18n import t
 
 app = FastAPI(title="CafeMate", version="0.2.0")
 engine = CafeBotEngine()
@@ -112,8 +113,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             reply = engine.confirm_pickup(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
             # Send rating buttons
+            lang = engine._get_lang(user_id)
             rating_markup = engine.get_rating_buttons(user_id)
-            asyncio.create_task(_send_telegram_message(chat_id, "How was your experience? Please rate us:", reply_markup=rating_markup))
+            asyncio.create_task(_send_telegram_message(chat_id, t("feedback_prompt", lang), reply_markup=rating_markup))
         elif callback_data.startswith("payment:"):
             method = callback_data.split(":", 1)[1]
             reply = await engine.chat(user_id, method)
@@ -123,19 +125,21 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             if qr_path:
                 asyncio.create_task(_send_telegram_photo(chat_id, qr_path))
             if engine.get_checkout_state(user_id) == "awaiting_qr_scan":
+                lang = engine._get_lang(user_id)
                 scan_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ I've Scanned", "callback_data": f"qr_scanned:{user_id}"}]
+                        [{"text": t("paid_qr", lang), "callback_data": f"qr_scanned:{user_id}"}]
                     ]
                 }
-                asyncio.create_task(_send_telegram_message(chat_id, "Tap the button after you scan the QR code:", reply_markup=scan_markup))
+                asyncio.create_task(_send_telegram_message(chat_id, t("scan_qr_prompt", lang), reply_markup=scan_markup))
             if engine.get_checkout_state(user_id) == "awaiting_va_transfer":
+                lang = engine._get_lang(user_id)
                 va_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ I've Paid", "callback_data": f"va_paid:{user_id}"}]
+                        [{"text": t("paid_va", lang), "callback_data": f"va_paid:{user_id}"}]
                     ]
                 }
-                asyncio.create_task(_send_telegram_message(chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup))
+                asyncio.create_task(_send_telegram_message(chat_id, t("transfer_prompt", lang), reply_markup=va_markup))
         elif callback_data.startswith("qr_scanned:"):
             reply = engine.confirm_qr_payment(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
@@ -147,30 +151,34 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             # Notify kitchen group
             asyncio.create_task(_send_kitchen_notification(user_id))
         elif callback_data.startswith("kitchen_ready:"):
-            reply = engine.kitchen_mark_ready(user_id)
+            customer_id = callback_data.split(":", 1)[1]
+            reply = engine.kitchen_mark_ready(customer_id)
             if reply:
-                # Send pickup notification to user (user_id == chat_id for private chats)
-                user_chat = int(user_id)
+                # Send pickup notification to the customer (not the staff member who clicked)
+                user_chat = int(customer_id)
+                lang = engine._get_lang(customer_id)
                 pickup_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+                        [{"text": t("received_btn", lang), "callback_data": f"pickup:{customer_id}"}]
                     ]
                 }
                 asyncio.create_task(_send_telegram_message(user_chat, reply, reply_markup=pickup_markup))
         elif callback_data.startswith("order_add:"):
-            asyncio.create_task(_send_telegram_message(chat_id, "What would you like to add?"))
+            lang = engine._get_lang(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, t("add_prompt", lang)))
         elif callback_data.startswith("order_checkout:"):
             reply = await engine.checkout(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
             # If user is at checkout, send payment method buttons
             if engine.get_checkout_state(user_id) == "awaiting_payment":
+                lang = engine._get_lang(user_id)
                 payment_markup = {
                     "inline_keyboard": [
-                        [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
-                        [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                        [{"text": t("va_btn", lang), "callback_data": "payment:va"}],
+                        [{"text": t("qr_btn", lang), "callback_data": "payment:qr"}],
                     ]
                 }
-                asyncio.create_task(_send_telegram_message(chat_id, "Choose your payment method:", reply_markup=payment_markup))
+                asyncio.create_task(_send_telegram_message(chat_id, t("choose_payment", lang), reply_markup=payment_markup))
         elif callback_data.startswith("rating:"):
             parts = callback_data.split(":")
             rating = int(parts[1])
@@ -260,17 +268,19 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     # If user has order items, send Add Another / Checkout action buttons
     action_buttons = engine.get_order_action_buttons(user_id)
     if action_buttons:
-        asyncio.create_task(_send_telegram_message(chat_id, "What would you like to do next?", reply_markup=action_buttons))
+        lang = engine._get_lang(user_id)
+        asyncio.create_task(_send_telegram_message(chat_id, t("next_action_prompt", lang), reply_markup=action_buttons))
 
     # If user is at checkout, send payment method buttons
     if engine.get_checkout_state(user_id) == "awaiting_payment":
+        lang = engine._get_lang(user_id)
         payment_markup = {
             "inline_keyboard": [
-                [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
-                [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                [{"text": t("va_btn", lang), "callback_data": "payment:va"}],
+                [{"text": t("qr_btn", lang), "callback_data": "payment:qr"}],
             ]
         }
-        asyncio.create_task(_send_telegram_message(chat_id, "Choose your payment method:", reply_markup=payment_markup))
+        asyncio.create_task(_send_telegram_message(chat_id, t("choose_payment", lang), reply_markup=payment_markup))
 
     # If user paid via QR, send the QR code image
     qr_path = engine.get_payment_qr_path(user_id)
@@ -348,13 +358,14 @@ async def _send_order_ready_notification(chat_id: int, user_id: str) -> None:
     """Send delayed 'order ready' message with pickup confirmation button."""
     import asyncio
     await asyncio.sleep(15)
+    lang = engine._get_lang(user_id)
     reply_markup = {
         "inline_keyboard": [
-            [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+            [{"text": t("received_btn", lang), "callback_data": f"pickup:{user_id}"}]
         ]
     }
     await _send_telegram_message(
         chat_id,
-        "Great news! Your order is ready for pickup. Please confirm once you've received it!",
+        t("order_ready", lang),
         reply_markup=reply_markup,
     )

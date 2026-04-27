@@ -6,6 +6,7 @@ import sys
 import httpx
 
 from cafebot import CafeBotEngine, settings
+from cafebot.i18n import t
 
 BOT_API = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
 engine = CafeBotEngine()
@@ -89,14 +90,15 @@ async def send_kitchen_notification(client: httpx.AsyncClient, user_id: str) -> 
 async def send_order_ready(client: httpx.AsyncClient, chat_id: int, user_id: str) -> None:
     """Send 'order ready' message with pickup confirmation button after a delay."""
     await asyncio.sleep(15)  # Simulate preparation time
+    lang = engine._get_lang(user_id)
     reply_markup = {
         "inline_keyboard": [
-            [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+            [{"text": t("received_btn", lang), "callback_data": f"pickup:{user_id}"}]
         ]
     }
     await send_message(
         client, chat_id,
-        "Great news! Your order is ready for pickup. Please confirm once you've received it!",
+        t("order_ready", lang),
         reply_markup=reply_markup,
     )
 
@@ -118,8 +120,9 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             await send_message(client, chat_id, reply)
             print(f"  -> Pickup confirmed by {user_id}")
             # Send rating buttons
+            lang = engine._get_lang(user_id)
             rating_markup = engine.get_rating_buttons(user_id)
-            await send_message(client, chat_id, "How was your experience? Please rate us:", reply_markup=rating_markup)
+            await send_message(client, chat_id, t("feedback_prompt", lang), reply_markup=rating_markup)
             print(f"  -> Sent rating buttons to {user_id}")
         elif data.startswith("payment:"):
             method = data.split(":", 1)[1]
@@ -132,20 +135,22 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
                 await send_photo(client, chat_id, qr_path)
                 print(f"  -> Sent QR code image to {user_id}")
             if engine.get_checkout_state(user_id) == "awaiting_qr_scan":
+                lang = engine._get_lang(user_id)
                 scan_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ I've Scanned", "callback_data": f"qr_scanned:{user_id}"}]
+                        [{"text": t("paid_qr", lang), "callback_data": f"qr_scanned:{user_id}"}]
                     ]
                 }
-                await send_message(client, chat_id, "Tap the button after you scan the QR code:", reply_markup=scan_markup)
+                await send_message(client, chat_id, t("scan_qr_prompt", lang), reply_markup=scan_markup)
                 print(f"  -> Sent QR scan button to {user_id}")
             if engine.get_checkout_state(user_id) == "awaiting_va_transfer":
+                lang = engine._get_lang(user_id)
                 va_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ I've Paid", "callback_data": f"va_paid:{user_id}"}]
+                        [{"text": t("paid_va", lang), "callback_data": f"va_paid:{user_id}"}]
                     ]
                 }
-                await send_message(client, chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup)
+                await send_message(client, chat_id, t("transfer_prompt", lang), reply_markup=va_markup)
                 print(f"  -> Sent VA paid button to {user_id}")
         elif data.startswith("qr_scanned:"):
             reply = engine.confirm_qr_payment(user_id)
@@ -160,19 +165,22 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             # Notify kitchen group
             await send_kitchen_notification(client, user_id)
         elif data.startswith("kitchen_ready:"):
-            reply = engine.kitchen_mark_ready(user_id)
+            customer_id = data.split(":", 1)[1]
+            reply = engine.kitchen_mark_ready(customer_id)
             if reply:
-                # Send pickup notification to user (user_id == chat_id for private chats)
-                user_chat = int(user_id)
+                # Send pickup notification to the customer (not the staff member who clicked)
+                user_chat = int(customer_id)
+                lang = engine._get_lang(customer_id)
                 pickup_markup = {
                     "inline_keyboard": [
-                        [{"text": "✅ Received", "callback_data": f"pickup:{user_id}"}]
+                        [{"text": t("received_btn", lang), "callback_data": f"pickup:{customer_id}"}]
                     ]
                 }
                 await send_message(client, user_chat, reply, reply_markup=pickup_markup)
-                print(f"  -> Kitchen marked order ready, sent pickup notification to {user_id}")
+                print(f"  -> Kitchen marked order ready, sent pickup notification to customer {customer_id}")
         elif data.startswith("order_add:"):
-            await send_message(client, chat_id, "What would you like to add?")
+            lang = engine._get_lang(user_id)
+            await send_message(client, chat_id, t("add_prompt", lang))
             print(f"  -> Add another drink requested by {user_id}")
         elif data.startswith("order_checkout:"):
             reply = await engine.checkout(user_id)
@@ -180,13 +188,14 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
             print(f"  -> Checkout triggered by {user_id}")
             # If user is at checkout, send payment method buttons
             if engine.get_checkout_state(user_id) == "awaiting_payment":
+                lang = engine._get_lang(user_id)
                 payment_markup = {
                     "inline_keyboard": [
-                        [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
-                        [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                        [{"text": t("va_btn", lang), "callback_data": "payment:va"}],
+                        [{"text": t("qr_btn", lang), "callback_data": "payment:qr"}],
                     ]
                 }
-                await send_message(client, chat_id, "Choose your payment method:", reply_markup=payment_markup)
+                await send_message(client, chat_id, t("choose_payment", lang), reply_markup=payment_markup)
                 print(f"  -> Sent payment buttons to {user_id}")
         elif data.startswith("rating:"):
             parts = data.split(":")
@@ -254,20 +263,22 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
     # If user has order items, send Add Another / Checkout action buttons
     action_buttons = engine.get_order_action_buttons(user_id)
     if action_buttons:
-        await send_message(client, chat_id, "What would you like to do next?", reply_markup=action_buttons)
+        lang = engine._get_lang(user_id)
+        await send_message(client, chat_id, t("next_action_prompt", lang), reply_markup=action_buttons)
         print(f"  -> Sent order action buttons to {user_id}")
 
     # If user is at checkout, send payment method buttons
     if engine.get_checkout_state(user_id) == "awaiting_payment":
+        lang = engine._get_lang(user_id)
         payment_markup = {
             "inline_keyboard": [
-                [{"text": "🏦 Virtual Account", "callback_data": "payment:va"}],
-                [{"text": "📱 QR Code", "callback_data": "payment:qr"}],
+                [{"text": t("va_btn", lang), "callback_data": "payment:va"}],
+                [{"text": t("qr_btn", lang), "callback_data": "payment:qr"}],
             ]
         }
         await send_message(
             client, chat_id,
-            "Choose your payment method:",
+            t("choose_payment", lang),
             reply_markup=payment_markup,
         )
         print(f"  -> Sent payment buttons to {user_id}")

@@ -15,6 +15,20 @@
     "price": 3.5
   },
   {
+    "name": "Americano",
+    "description": "Espresso diluted with hot water. Smooth, strong, and endlessly sippable.",
+    "moods": [
+      "tired",
+      "focused",
+      "productive",
+      "need caffeine",
+      "morning"
+    ],
+    "caffeine_level": "high",
+    "temperature": "hot",
+    "price": 4.0
+  },
+  {
     "name": "Caramel Macchiato",
     "description": "Smooth espresso with vanilla and caramel drizzle. A warm hug in a cup.",
     "moods": [
