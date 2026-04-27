@@ -254,7 +254,7 @@ class CafeBotEngine:
 
         # --- lightweight pre-LLM fallback for remove commands ---
         lower = message.lower()
-        if any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "batal", "batalin", "kurangi", "kurang", "cancel"]):
+        if any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "batal", "batalin", "kurangi", "kurang", "cancel", "skip", "don't want", "dont want", "tidak mau", "ga mau", "nggak mau"]):
             to_remove = self._try_parse_order(message)
             if to_remove:
                 drink = next((d for d in DRINK_MENU if d.name.lower() == to_remove.lower()), None)
@@ -262,8 +262,11 @@ class CafeBotEngine:
                     for i, item in enumerate(state.order):
                         if item.drink.name.lower() == drink.name.lower():
                             state.order.pop(i)
+                            state.last_recommended = None
                             return f"{t('removed', lang, name=drink.name)}\n{self._render_order(state)}"
                     return f"{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
+            state.last_recommended = None
+            return "No problem! Let me know if you want something else."
 
         # --- LLM intent classification + routing ---
         if self._llm.available:
@@ -321,10 +324,12 @@ class CafeBotEngine:
                     return await self._checkout(user_id)
 
                 # Default / chat intent — set last_recommended if LLM mentions a drink
-                for drink in DRINK_MENU:
-                    if drink.name.lower() in reply.lower():
-                        state.last_recommended = drink
-                        break
+                # but only if user isn't clearly trying to remove, checkout, or see menu
+                if not any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "batal", "batalin", "kurangi", "kurang", "cancel", "skip", "don't want", "dont want", "tidak mau", "ga mau", "nggak mau", "checkout", "pay", "done", "finish", "menu", "what do you have", "what's available", "my order"]):
+                    for drink in DRINK_MENU:
+                        if drink.name.lower() in reply.lower():
+                            state.last_recommended = drink
+                            break
                 return reply
 
         # --- local fallback (last resort only) ---
