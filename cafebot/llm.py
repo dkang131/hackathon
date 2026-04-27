@@ -80,7 +80,8 @@ class AzureLLMClient:
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         # Prepend language instruction directly on the user message for stronger compliance
-        lang_prefix = f"[Respond in {lang_hint}] "
+        lang_name = language_name(lang_hint)
+        lang_prefix = f"[Respond in {lang_name}] "
         messages.append({"role": "user", "content": lang_prefix + message})
         try:
             response = await self._client.chat.completions.create(

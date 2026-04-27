@@ -213,8 +213,10 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         asyncio.create_task(_send_telegram_message(chat_id, wizard_reply))
         return JSONResponse({"ok": True})
 
+    is_start = text.lower() == "/start"
+
     # Handle /start
-    if text.lower() == "/start":
+    if is_start:
         reply = await engine.greet(user_id, name=name)
 
     # ---- owner admin commands ----
@@ -269,10 +271,12 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     asyncio.create_task(_send_telegram_message(chat_id, reply))
 
     # If user has order items, send Add Another / Checkout action buttons
-    action_buttons = engine.get_order_action_buttons(user_id)
-    if action_buttons:
-        lang = engine._get_lang(user_id)
-        asyncio.create_task(_send_telegram_message(chat_id, t("next_action_prompt", lang), reply_markup=action_buttons))
+    # Skip buttons on /start to avoid cluttering the greeting
+    if not is_start:
+        action_buttons = engine.get_order_action_buttons(user_id)
+        if action_buttons:
+            lang = engine._get_lang(user_id)
+            asyncio.create_task(_send_telegram_message(chat_id, t("next_action_prompt", lang), reply_markup=action_buttons))
 
     # If user is at checkout, send payment method buttons
     if engine.get_checkout_state(user_id) == "awaiting_payment":

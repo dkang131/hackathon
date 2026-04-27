@@ -271,17 +271,35 @@ class CafeBotEngine:
         if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish", "let's pay", "lets pay", "proceed to payment", "ready to pay", "i'm done", "im done", "all set", "wrap it up", "bill please", "itu aja", "sudah", "selesai", "cukup", "bayar", "sudah selesai", "mau bayar"]):
             return await self._checkout(user_id)
 
-        ordered = self._try_parse_order(message)
-        if ordered:
-            drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
-            if drink:
-                state.order.append(OrderItem(drink))
-                state.last_recommended = None  # clear previous recommendation
-                return (
-                    f"{t('confirmation', lang)}\n"
-                    f"{self._render_order(state)}\n"
-                )
-            return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
+        # --- remove drink from order ---
+        if any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "cancel", "batal", "kurangi", "kurang"]):
+            to_remove = self._try_parse_order(message)
+            if to_remove:
+                drink = next((d for d in DRINK_MENU if d.name.lower() == to_remove.lower()), None)
+                if drink:
+                    for i, item in enumerate(state.order):
+                        if item.drink.name.lower() == drink.name.lower():
+                            state.order.pop(i)
+                            return (
+                                f"{t('removed', lang, name=drink.name)}\n"
+                                f"{self._render_order(state)}\n"
+                            )
+                    return f"{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
+
+        # --- skip auto-ordering for questions ---
+        is_question = "?" in message or any(kw in lower for kw in ["apa itu", "what is", "what's", "how is", "how are", "bagaimana", "berapa", "why", "kenapa", "explain", "jelaskan"])
+        if not is_question:
+            ordered = self._try_parse_order(message)
+            if ordered:
+                drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
+                if drink:
+                    state.order.append(OrderItem(drink))
+                    state.last_recommended = None  # clear previous recommendation
+                    return (
+                        f"{t('confirmation', lang)}\n"
+                        f"{self._render_order(state)}\n"
+                    )
+                return f"Hmm, I don't think we have '{ordered}' on the menu. Want me to show you what we've got?"
 
         # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
         if self._llm.available:

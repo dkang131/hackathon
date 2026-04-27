@@ -265,6 +265,22 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "ko": "아직 아무것도 주문하지 않았어! 먼저 뭔가 골라보자.",
         "es": "¡Aún no has pedido nada! Vamos a elegir algo primero.",
     },
+    "removed": {
+        "en": "Removed {name} from your order.",
+        "id": "{name} sudah dihapus dari pesananmu.",
+        "zh": "已将{name}从订单中移除。",
+        "ja": "{name}を注文から削除しました。",
+        "ko": "{name}을(를) 주문에서 제거했어.",
+        "es": "Eliminado {name} de tu pedido.",
+    },
+    "not_in_order": {
+        "en": "{name} isn't in your order.",
+        "id": "{name} tidak ada di pesananmu.",
+        "zh": "你的订单中没有{name}。",
+        "ja": "{name}は注文に入っていません。",
+        "ko": "주문에 {name}이(가) 없어.",
+        "es": "{name} no está en tu pedido.",
+    },
     "scan_qr_prompt": {
         "en": "Tap the button after you scan the QR code:",
         "id": "Tap tombol setelah scan kode QR:",
