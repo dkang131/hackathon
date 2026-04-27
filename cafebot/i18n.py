@@ -42,11 +42,18 @@ _ES_KEYWORDS = {
 }
 
 
+# Single-word Indonesian identifiers — common responses that should be detected even alone
+_ID_SINGLE_WORDS = {"boleh", "iya", "ya", "mau", "nggak", "gak", "tidak", "makasih", "terima", "kasih", "baik", "oke", "gas", "setuju"}
+
+
 def detect_language_simple(text: str) -> str:
     """Fast heuristic language detection. Returns ISO 639-1 code."""
     if not text:
         return "en"
-    t = text.lower()
+    t = text.lower().strip()
+    # Single-word Indonesian catch
+    if t in _ID_SINGLE_WORDS:
+        return "id"
     # Indonesian keyword check
     words = set(re.findall(r"[a-z]+", t))
     if len(words & _ID_KEYWORDS) >= 2:

@@ -208,6 +208,7 @@ class CafeBotEngine:
                 greet_prompt,
                 state.conversation_history,
                 user_name=user_name,
+                lang_hint=state.lang_hint,
             )
             if reply:
                 state.conversation_history.append({"role": "user", "content": "Say a warm, friendly greeting to a new customer. Ask how they're doing today."})
@@ -247,7 +248,7 @@ class CafeBotEngine:
             return t("thanks_feedback", lang)
 
         # --- order confirmation handling (LLM recommendation follow-up) ---
-        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "lets do", "let's do", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it"]):
+        if state.last_recommended and any(kw in lower for kw in ["sure", "yes", "yeah", "yep", "ok", "okay", "lets do it", "let's do it", "lets do", "let's do", "i'll take it", "ill take it", "that sounds good", "sounds good", "perfect", "great", "awesome", "love it", "want it", "get it", "boleh", "iya", "ya", "mau", "baik", "setuju", "gas", "oke"]):
             state.order.append(OrderItem(state.last_recommended))
             state.last_recommended = None
             return (
@@ -267,7 +268,7 @@ class CafeBotEngine:
             return self._render_order(state)
 
         # --- detect natural checkout/payment intent ---
-        if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish", "let's pay", "lets pay", "proceed to payment", "ready to pay", "i'm done", "im done", "all set", "wrap it up", "bill please"]):
+        if any(kw in lower for kw in ["checkout", "pay", "done", "that's all", "finish", "let's pay", "lets pay", "proceed to payment", "ready to pay", "i'm done", "im done", "all set", "wrap it up", "bill please", "itu aja", "sudah", "selesai", "cukup", "bayar", "sudah selesai", "mau bayar"]):
             return await self._checkout(user_id)
 
         ordered = self._try_parse_order(message)
@@ -284,7 +285,7 @@ class CafeBotEngine:
 
         # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
         if self._llm.available:
-            reply = await self._llm.chat(message, state.conversation_history, user_name=state.user_name)
+            reply = await self._llm.chat(message, state.conversation_history, user_name=state.user_name, lang_hint=lang)
             if reply:
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})

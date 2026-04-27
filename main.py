@@ -101,7 +101,10 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         query_id = callback_query["id"]
         from_user = callback_query["from"]
         user_id = str(from_user["id"])
-        chat_id = callback_query["message"]["chat"]["id"]
+        callback_msg = callback_query.get("message")
+        if not callback_msg:
+            return JSONResponse({"ok": True})
+        chat_id = callback_msg["chat"]["id"]
 
         # Answer callback to remove loading spinner
         import httpx
@@ -186,7 +189,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             reply = engine.save_rating(user_id, rating)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
         # Remove buttons from the original message to prevent double-presses
-        message_id = callback_query["message"]["message_id"]
+        message_id = callback_msg["message_id"]
         asyncio.create_task(_edit_telegram_remove_buttons(chat_id, message_id))
         return JSONResponse({"ok": True})
 

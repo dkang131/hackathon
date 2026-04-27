@@ -6,6 +6,7 @@ from datetime import datetime
 from openai import AsyncAzureOpenAI
 
 from .config import settings
+from .i18n import language_name
 from .menu import DRINK_MENU
 
 
@@ -38,9 +39,10 @@ class AzureLLMClient:
     def available(self) -> bool:
         return self._client is not None
 
-    def _system_prompt(self, user_name: str | None = None) -> str:
+    def _system_prompt(self, user_name: str | None = None, lang_hint: str = "en") -> str:
         drinks = ", ".join(d.name for d in DRINK_MENU)
         name_hint = f" The customer's name is {user_name}. Use their name naturally once in a while. " if user_name else ""
+        lang = language_name(lang_hint)
         return (
             "You are CafeMate, a warm, friendly barista who talks to customers like they're your close friend. "
             "You work at a cozy cafe and your superpower is recommending the perfect drink based on how someone feels. "
@@ -49,13 +51,18 @@ class AzureLLMClient:
             f"Today's date is {datetime.now().strftime('%A, %B %d')}. "
             f"Available drinks: {drinks}. "
             f"{name_hint}"
-            "IMPORTANT: Detect the language the user is writing in and reply naturally in that same language. "
+            f"CRITICAL LANGUAGE RULE: The user's current message is written in {lang}. "
+            f"You MUST reply entirely in {lang}. "
+            "Analyze ONLY the latest user message to determine the language. "
+            "Do NOT let previous messages in the conversation history influence your language choice. "
+            "Even if earlier messages were in a different language, always respond in the language of the CURRENT user message. "
             "Do not translate drink names — keep them in English (e.g., Espresso, Matcha Latte). "
             "But all other text (greetings, explanations, friendly banter) must be in the user's detected language. "
-            "IMPORTANT: When a user mentions a drink or agrees to one you recommended, it is automatically added to their order. "
-            "You don't need to ask for confirmation — just acknowledge it warmly and let them know their current order. "
+            "IMPORTANT: When a user explicitly mentions a drink by name, the system will add it to their order. "
+            "If you recommend a drink and they agree with words like 'sure', 'ok', or 'yes', the system will also add it. "
+            "After a drink is added, acknowledge it warmly and show their current order. "
             "If they want to finish and pay, they can say things like 'I'm done', 'let's pay', or 'checkout' and the system will handle it. "
-            "Guide them naturally: after adding a drink, you can ask if they want anything else or if they're ready to pay."
+            "Guide them naturally: after adding a drink, ask if they want anything else or if they're ready to pay."
         )
 
     async def chat(
@@ -65,13 +72,16 @@ class AzureLLMClient:
         user_name: str | None = None,
         system_override: str | None = None,
         max_tokens: int = 150,
+        lang_hint: str = "en",
     ) -> str:
         if not self._client:
             return ""
-        system_prompt = system_override if system_override else self._system_prompt(user_name)
+        system_prompt = system_override if system_override else self._system_prompt(user_name, lang_hint)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
-        messages.append({"role": "user", "content": message})
+        # Prepend language instruction directly on the user message for stronger compliance
+        lang_prefix = f"[Respond in {lang}] "
+        messages.append({"role": "user", "content": lang_prefix + message})
         try:
             response = await self._client.chat.completions.create(
                 model=settings.azure_openai_deployment_name,
