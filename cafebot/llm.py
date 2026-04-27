@@ -42,7 +42,6 @@ class AzureLLMClient:
     def _system_prompt(self, user_name: str | None = None, lang_hint: str = "en") -> str:
         drinks = ", ".join(d.name for d in DRINK_MENU)
         name_hint = f" The customer's name is {user_name}. Use their name naturally once in a while. " if user_name else ""
-        lang = language_name(lang_hint)
         return (
             "You are CafeMate, a warm, friendly barista who talks to customers like they're your close friend. "
             "You work at a cozy cafe and your superpower is recommending the perfect drink based on how someone feels. "
@@ -51,19 +50,30 @@ class AzureLLMClient:
             f"Today's date is {datetime.now().strftime('%A, %B %d')}. "
             f"Available drinks: {drinks}. "
             f"{name_hint}"
-            f"CRITICAL LANGUAGE RULE: The user's current message is written in {lang}. "
-            f"You MUST reply entirely in {lang}. "
-            "Analyze ONLY the latest user message to determine the language. "
+            "CRITICAL LANGUAGE RULE: Analyze the user's latest message to determine what language it is written in. "
+            "You MUST reply entirely in that same language. "
             "Do NOT let previous messages in the conversation history influence your language choice. "
             "Even if earlier messages were in a different language, always respond in the language of the CURRENT user message. "
             "Do not translate drink names — keep them in English (e.g., Espresso, Matcha Latte). "
             "But all other text (greetings, explanations, friendly banter) must be in the user's detected language. "
+            "LANGUAGE FORMAT: You MUST begin EVERY response with a language tag in this exact format: [LANG:xx] where xx is the ISO 639-1 code of the language you are using (en, id, zh, ja, ko, or es). "
+            "Example: [LANG:id] Halo! Senang bertemu denganmu. "
+            "This tag helps the system route your response correctly. Do not forget it. "
             "IMPORTANT: When a user explicitly mentions a drink by name, the system will add it to their order. "
             "If you recommend a drink and they agree with words like 'sure', 'ok', or 'yes', the system will also add it. "
             "After a drink is added, acknowledge it warmly and show their current order. "
             "If they want to finish and pay, they can say things like 'I'm done', 'let's pay', or 'checkout' and the system will handle it. "
             "Guide them naturally: after adding a drink, ask if they want anything else or if they're ready to pay."
         )
+
+    @staticmethod
+    def _parse_lang_tag(text: str) -> tuple[str, str | None]:
+        """Strip [LANG:xx] prefix and return (clean_text, lang_code)."""
+        import re
+        match = re.match(r"^\[LANG:([a-z]{2})\]\s*", text, re.IGNORECASE)
+        if match:
+            return text[match.end():], match.group(1).lower()
+        return text, None
 
     async def chat(
         self,
@@ -73,16 +83,14 @@ class AzureLLMClient:
         system_override: str | None = None,
         max_tokens: int = 150,
         lang_hint: str = "en",
-    ) -> str:
+    ) -> tuple[str, str | None]:
+        """Returns (reply_text, detected_lang_code). detected_lang_code is None on failure."""
         if not self._client:
-            return ""
+            return "", None
         system_prompt = system_override if system_override else self._system_prompt(user_name, lang_hint)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
-        # Prepend language instruction directly on the user message for stronger compliance
-        lang_name = language_name(lang_hint)
-        lang_prefix = f"[Respond in {lang_name}] "
-        messages.append({"role": "user", "content": lang_prefix + message})
+        messages.append({"role": "user", "content": message})
         try:
             response = await self._client.chat.completions.create(
                 model=settings.azure_openai_deployment_name,
@@ -90,8 +98,9 @@ class AzureLLMClient:
                 temperature=0.9,
                 max_tokens=max_tokens,
             )
-            return response.choices[0].message.content or ""
+            raw = response.choices[0].message.content or ""
+            return self._parse_lang_tag(raw)
         except Exception as e:
             # Silently fail so engine falls back to local mode
             logging.debug("Azure LLM error: %s", e)
-            return ""
+            return "", None

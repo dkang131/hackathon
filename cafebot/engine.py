@@ -204,13 +204,15 @@ class CafeBotEngine:
                 if user_name
                 else "Say a warm, friendly greeting to a new customer. "
             ) + "Ask how they're doing today."
-            reply = await self._llm.chat(
+            reply, detected_lang = await self._llm.chat(
                 greet_prompt,
                 state.conversation_history,
                 user_name=user_name,
                 lang_hint=state.lang_hint,
             )
             if reply:
+                if detected_lang:
+                    state.lang_hint = detected_lang
                 state.conversation_history.append({"role": "user", "content": "Say a warm, friendly greeting to a new customer. Ask how they're doing today."})
                 state.conversation_history.append({"role": "assistant", "content": reply})
                 return "\n".join(status_lines) + reply
@@ -303,8 +305,10 @@ class CafeBotEngine:
 
         # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
         if self._llm.available:
-            reply = await self._llm.chat(message, state.conversation_history, user_name=state.user_name, lang_hint=lang)
+            reply, detected_lang = await self._llm.chat(message, state.conversation_history, user_name=state.user_name, lang_hint=lang)
             if reply:
+                if detected_lang:
+                    state.lang_hint = detected_lang
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
                 for drink in DRINK_MENU:

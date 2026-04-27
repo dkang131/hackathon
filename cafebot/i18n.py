@@ -28,11 +28,16 @@ _LANG_NAMES: dict[str, str] = {
 # Lightweight keyword/character based detection (no langdetect dependency)
 _ID_KEYWORDS = {
     "saya", "aku", "kamu", "dia", "ini", "itu", "yang", "dan", "atau", "dengan",
-    "untuk", "dari", "pada", "boleh", "mau", "tidak", "nggak", "gak", "iya", "ya",
+    "boleh", "mau", "tidak", "nggak", "gak", "iya", "ya",
     "deh", "dong", "aja", "sih", "lah", "kok", "begitu", "sangat", "banget", "sekali",
     "banyak", "sedikit", "bagus", "lelah", "capek", "senang", "sedih", "marah", "sakit",
     "haus", "lapar", "baik", "hari", "kali", "sudah", "sudahlah", "makasih", "terima",
     "kasih", "minum", "makan", "suka", "enak", "pagi", "siang", "malam", "selamat",
+    "lagi", "pusing", "ngantuk", "bosan", "takut", "malas", "butuh", "ingin", "kangen",
+    "kecewa", "nangis", "ketawa", "pulang", "kerja", "tidur", "bangun", "jalan",
+    "datang", "pergi", "lihat", "dengar", "bicara", "pikir", "tahu", "lupa", "ingat",
+    "cari", "temukan", "bawa", "beri", "buka", "tutup", "masuk", "keluar", "naik",
+    "turun", "cepat", "lambat", "mudah", "sulit",
 }
 
 _ES_KEYWORDS = {
