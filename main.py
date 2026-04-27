@@ -10,6 +10,7 @@ Or set webhook for Telegram:
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.responses import JSONResponse
+import asyncio
 
 from cafebot import CafeBotEngine, settings
 from cafebot.menu import DRINK_MENU
@@ -262,7 +263,6 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         reply = await engine.chat(user_id, text, name=name)
 
     # Respond via Telegram Bot API (fire-and-forget via background task or httpx)
-    import asyncio
     asyncio.create_task(_send_telegram_message(chat_id, reply))
 
     # If user has order items, send Add Another / Checkout action buttons
@@ -356,7 +356,6 @@ async def _edit_telegram_remove_buttons(chat_id: int, message_id: int) -> None:
 
 async def _send_order_ready_notification(chat_id: int, user_id: str) -> None:
     """Send delayed 'order ready' message with pickup confirmation button."""
-    import asyncio
     await asyncio.sleep(15)
     lang = engine._get_lang(user_id)
     reply_markup = {
