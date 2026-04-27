@@ -7,8 +7,8 @@ from .models import Drink, OrderItem, UserState
 from .menu import DRINK_MENU, MOOD_KEYWORDS
 from .menu_manager import load_menu, save_menu
 from .llm import AzureLLMClient
-from .i18n import detect_language, language_name
 from .config import settings
+from .feedback_manager import add_feedback, get_feedback_summary, update_last_feedback_comment
 
 # ---- Friendly response pools ----
 _GREETINGS = [
@@ -187,7 +187,6 @@ class CafeBotEngine:
             reply = await self._llm.chat(
                 greet_prompt,
                 state.conversation_history,
-                language="English",
                 user_name=user_name,
             )
             if reply:
@@ -206,18 +205,14 @@ class CafeBotEngine:
             state.user_name = name
         lower = message.lower()
 
-        # Detect language from user input; only detect for messages with enough text
-        if len(message.strip()) >= 15:
-            detected = detect_language(message)
-            state.lang_code = detected
-            state.lang_name = language_name(detected)
-        lang_code = state.lang_code
-        lang_name = state.lang_name
-
         # --- feedback handling ---
         if state.awaiting_feedback:
             state.feedback_history.append(message)
             state.awaiting_feedback = False
+            # Update the persisted feedback entry with the user's comment
+            comment = message.strip()
+            if comment.lower() not in ("done", "no", "none", "n/a", "-"):
+                update_last_feedback_comment(user_id, comment)
             if state.feedback_rating:
                 stars = "⭐" * state.feedback_rating
                 return (
@@ -267,7 +262,7 @@ class CafeBotEngine:
 
         # --- LLM mode (keywords disabled — let Azure handle mood & language naturally) ---
         if self._llm.available:
-            reply = await self._llm.chat(message, state.conversation_history, language=lang_name, user_name=state.user_name)
+            reply = await self._llm.chat(message, state.conversation_history, user_name=state.user_name)
             if reply:
                 state.conversation_history.append({"role": "user", "content": message})
                 state.conversation_history.append({"role": "assistant", "content": reply})
@@ -330,41 +325,21 @@ class CafeBotEngine:
         state.checkout_state = "awaiting_payment"
         return (
             f"{receipt}\n"
-            # f"Total: ${total:.2f}\n\n"
-            # "Please choose a payment method:\n"
-            # "  1. Virtual Account (VA)\n"
-            # "  2. QR Code"
         )
 
     async def _handle_payment(self, user_id: str, message: str) -> str:
-        """Handle payment selection during checkout."""
+        """Handle payment selection — now button-driven, but callbacks route through here."""
         state = self._get_state(user_id)
-        lower = message.lower()
-        payment_methods = {
-            "virtual account": "VA",
-            "va": "VA",
-            "1": "VA",
-            "qr": "QR",
-            "qris": "QR",
-            "qr code": "QR",
-            "2": "QR",
-        }
-        selected = None
-        for key, method in payment_methods.items():
-            if key in lower:
-                selected = method
-                break
-        if not selected:
-            return (
-                "Hmm, I didn't catch that. Please choose:\n"
-                "  1. Virtual Account (VA)\n"
-                "  2. QR Code"
-            )
+        selected = message.strip().lower()
+
+        if selected not in ("va", "qr"):
+            return "Please use the payment buttons above to choose your method."
+
         total = sum(i.drink.price * i.quantity for i in state.order)
-        state.payment_method = selected
+        state.payment_method = selected.upper()
         state.paid_amount = total
 
-        if selected == "VA":
+        if selected == "va":
             state.checkout_state = "awaiting_va_transfer"
             va_number = self._generate_va_number(user_id)
             return (
@@ -373,14 +348,14 @@ class CafeBotEngine:
                 f"  `{va_number}`\n\n"
                 f"Tap *I've Paid* once you're done!"
             )
-        else:  # QR
-            state.checkout_state = "awaiting_qr_scan"
-            qr_path = self._generate_qr_code(user_id, total)
-            return (
-                f"Total: ${total:.2f}\n\n"
-                f"Please scan the QR code below to pay. "
-                f"Tap *I've Scanned* once you're done!"
-            )
+        # QR
+        state.checkout_state = "awaiting_qr_scan"
+        qr_path = self._generate_qr_code(user_id, total)
+        return (
+            f"Total: ${total:.2f}\n\n"
+            f"Please scan the QR code below to pay. "
+            f"Tap *I've Scanned* once you're done!"
+        )
 
     async def checkout(self, user_id: str) -> str:
         """Public wrapper to trigger checkout for a user."""
@@ -467,10 +442,17 @@ class CafeBotEngine:
         return "Enjoy your drinks! Thanks for visiting CafeMate. Come back soon!"
 
     def save_rating(self, user_id: str, rating: int) -> str:
-        """Save user rating and prompt for optional comment."""
+        """Save user rating to persistent JSON storage and prompt for optional comment."""
         state = self._get_state(user_id)
         state.feedback_rating = rating
         state.feedback_history.append(f"Rating: {rating}/5")
+        # Persist to JSON immediately
+        add_feedback(
+            user_id=user_id,
+            user_name=state.user_name,
+            rating=rating,
+            comment="",
+        )
         stars = "⭐" * rating
         return (
             f"Thank you for rating us {stars} ({rating}/5)!\n\n"
@@ -535,22 +517,8 @@ class CafeBotEngine:
         return "\n".join(lines)
 
     def admin_get_feedback(self) -> str:
-        """Collect and format all user feedback for the owner."""
-        if not self._users:
-            return "No users have interacted with the bot yet."
-        lines = ["\n  --- User Feedback ---"]
-        has_feedback = False
-        for uid, state in self._users.items():
-            if state.feedback_history:
-                has_feedback = True
-                name = state.user_name or uid
-                lines.append(f"\n  User: {name} (ID: {uid})")
-                for entry in state.feedback_history:
-                    lines.append(f"    • {entry}")
-        if not has_feedback:
-            lines.append("  No feedback collected yet.")
-        lines.append("  ---------------------\n")
-        return "\n".join(lines)
+        """Retrieve all persisted user feedback from JSON storage."""
+        return get_feedback_summary()
 
     def admin_add_drink(self, json_str: str) -> str:
         """Add a drink from JSON string and persist."""

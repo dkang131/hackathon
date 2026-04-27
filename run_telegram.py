@@ -13,17 +13,22 @@ engine = CafeBotEngine()
 
 async def get_updates(client: httpx.AsyncClient, offset: int = 0) -> list[dict]:
     url = f"{BOT_API}/getUpdates"
-    resp = await client.get(
-        url,
-        params={
-            "offset": offset,
-            "limit": 10,
-            "timeout": 30,
-            "allowed_updates": '["message","edited_message","callback_query"]',
-        },
-    )
-    data = resp.json()
-    return data.get("result", [])
+    try:
+        resp = await client.get(
+            url,
+            params={
+                "offset": offset,
+                "limit": 10,
+                "timeout": 30,
+                "allowed_updates": '["message","edited_message","callback_query"]',
+            },
+            timeout=35.0,  # Must be > Telegram's timeout to avoid ReadTimeout on empty polls
+        )
+        data = resp.json()
+        return data.get("result", [])
+    except httpx.ReadTimeout:
+        # Long-polling timeout — no updates available, this is normal
+        return []
 
 
 async def send_message(client: httpx.AsyncClient, chat_id: int, text: str, reply_markup: dict | None = None, parse_mode: str = "Markdown") -> None:
@@ -56,6 +61,29 @@ async def edit_message_remove_buttons(client: httpx.AsyncClient, chat_id: int, m
     """Remove inline keyboard from a message to prevent double-presses."""
     url = f"{BOT_API}/editMessageReplyMarkup"
     await client.post(url, json={"chat_id": chat_id, "message_id": message_id, "reply_markup": {}})
+
+
+async def send_kitchen_notification(client: httpx.AsyncClient, user_id: str) -> bool:
+    """Send order notification to kitchen group. Returns True on success."""
+    if not settings.kitchen_group_id:
+        print(f"  -> Kitchen group ID not configured, skipping notification")
+        return False
+    try:
+        kitchen_chat = int(settings.kitchen_group_id)
+        kitchen_msg = engine.get_kitchen_order_message(user_id)
+        if not kitchen_msg:
+            print(f"  -> No order to notify kitchen about")
+            return False
+        kitchen_markup = engine.get_kitchen_ready_button(user_id)
+        await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
+        print(f"  -> Sent kitchen notification to group {kitchen_chat} for user {user_id}")
+        return True
+    except ValueError:
+        print(f"  -> ERROR: Invalid kitchen_group_id '{settings.kitchen_group_id}'. Must be a valid Telegram chat ID (negative for groups).")
+        return False
+    except Exception as e:
+        print(f"  -> ERROR sending kitchen notification: {type(e).__name__}: {e}")
+        return False
 
 
 async def send_order_ready(client: httpx.AsyncClient, chat_id: int, user_id: str) -> None:
@@ -119,35 +147,18 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
                 }
                 await send_message(client, chat_id, "Tap the button after you complete the transfer:", reply_markup=va_markup)
                 print(f"  -> Sent VA paid button to {user_id}")
-            # If user just placed an order, notify kitchen group
-            if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
-                kitchen_msg = engine.get_kitchen_order_message(user_id)
-                kitchen_markup = engine.get_kitchen_ready_button(user_id)
-                kitchen_chat = int(settings.kitchen_group_id)
-                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
-                print(f"  -> Sent kitchen notification for {user_id}")
         elif data.startswith("qr_scanned:"):
             reply = engine.confirm_qr_payment(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> QR payment confirmed by {user_id}")
             # Notify kitchen group
-            if settings.kitchen_group_id:
-                kitchen_msg = engine.get_kitchen_order_message(user_id)
-                kitchen_markup = engine.get_kitchen_ready_button(user_id)
-                kitchen_chat = int(settings.kitchen_group_id)
-                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
-                print(f"  -> Sent kitchen notification for {user_id}")
+            await send_kitchen_notification(client, user_id)
         elif data.startswith("va_paid:"):
             reply = engine.confirm_va_payment(user_id)
             await send_message(client, chat_id, reply)
             print(f"  -> VA payment confirmed by {user_id}")
             # Notify kitchen group
-            if settings.kitchen_group_id:
-                kitchen_msg = engine.get_kitchen_order_message(user_id)
-                kitchen_markup = engine.get_kitchen_ready_button(user_id)
-                kitchen_chat = int(settings.kitchen_group_id)
-                await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
-                print(f"  -> Sent kitchen notification for {user_id}")
+            await send_kitchen_notification(client, user_id)
         elif data.startswith("kitchen_ready:"):
             reply = engine.kitchen_mark_ready(user_id)
             if reply:
@@ -267,13 +278,9 @@ async def process_update(client: httpx.AsyncClient, update: dict) -> None:
         await send_photo(client, chat_id, qr_path)
         print(f"  -> Sent QR code image to {user_id}")
 
-    # If user just placed an order, notify kitchen group
+    # If user just placed an order, notify kitchen group (for non-callback flows)
     if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
-        kitchen_msg = engine.get_kitchen_order_message(user_id)
-        kitchen_markup = engine.get_kitchen_ready_button(user_id)
-        kitchen_chat = int(settings.kitchen_group_id)
-        await send_message(client, kitchen_chat, kitchen_msg, reply_markup=kitchen_markup)
-        print(f"  -> Sent kitchen notification for {user_id}")
+        await send_kitchen_notification(client, user_id)
 
 
 async def main() -> None:
@@ -285,6 +292,7 @@ async def main() -> None:
     print("  CafeMate Telegram Polling Mode")
     print(f"  Bot token: ...{settings.telegram_bot_token[-6:]}")
     print(f"  Owner ID:  {settings.owner_telegram_id or 'Not set'}")
+    print(f"  Kitchen:   {settings.kitchen_group_id or 'Not configured'}")
     print(f"  Azure LLM: {'Connected' if engine._llm.available else 'Fallback (English only)'}")
     print("=" * 60)
     print("  Send /start to your bot on Telegram to begin!")
@@ -305,7 +313,9 @@ async def main() -> None:
                 print("\n\nShutting down...")
                 break
             except Exception as e:
-                print(f"[Error] {e}")
+                import traceback
+                print(f"[Error] {type(e).__name__}: {e}")
+                traceback.print_exc()
                 await asyncio.sleep(2)
 
 

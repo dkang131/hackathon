@@ -242,6 +242,7 @@ run_telegram.py  │  main.py (FastAPI)  │  run_cli.py
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Recommended | Model deployment name |
 | `TELEGRAM_BOT_TOKEN` | For Telegram | From @BotFather |
 | `OWNER_TELEGRAM_ID` | For admin | Your Telegram user ID |
+| `KITCHEN_GROUP_ID` | For Telegram | Your Back Kitchen Group ID |
 | `WEBHOOK_URL` | For webhook mode | Public HTTPS URL |
 | `WEBHOOK_SECRET` | Optional | Webhook verification token |
 

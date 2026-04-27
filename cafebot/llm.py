@@ -38,7 +38,7 @@ class AzureLLMClient:
     def available(self) -> bool:
         return self._client is not None
 
-    def _system_prompt(self, language: str = "English", user_name: str | None = None) -> str:
+    def _system_prompt(self, user_name: str | None = None) -> str:
         drinks = ", ".join(d.name for d in DRINK_MENU)
         name_hint = f" The customer's name is {user_name}. Use their name naturally once in a while. " if user_name else ""
         return (
@@ -62,12 +62,11 @@ class AzureLLMClient:
         self,
         message: str,
         history: list[dict],
-        language: str = "English",
         user_name: str | None = None,
     ) -> str:
         if not self._client:
             return ""
-        messages = [{"role": "system", "content": self._system_prompt(language, user_name)}]
+        messages = [{"role": "system", "content": self._system_prompt(user_name)}]
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         try:

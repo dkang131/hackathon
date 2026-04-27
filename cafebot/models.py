@@ -28,8 +28,6 @@ class UserState:
     order: list[OrderItem] = field(default_factory=list)
     conversation_history: list[dict] = field(default_factory=list)
     user_name: str | None = None
-    lang_code: str = "en"
-    lang_name: str = "English"
     # Order confirmation
     pending_drink: Drink | None = None
     last_recommended: Drink | None = None
