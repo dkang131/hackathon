@@ -252,12 +252,30 @@ class CafeBotEngine:
         if state.checkout_state == "awaiting_payment":
             return await self._handle_payment(user_id, message)
 
+        # --- lightweight pre-LLM fallback for remove commands ---
+        lower = message.lower()
+        if any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "batal", "batalin", "kurangi", "kurang", "cancel"]):
+            to_remove = self._try_parse_order(message)
+            if to_remove:
+                drink = next((d for d in DRINK_MENU if d.name.lower() == to_remove.lower()), None)
+                if drink:
+                    for i, item in enumerate(state.order):
+                        if item.drink.name.lower() == drink.name.lower():
+                            state.order.pop(i)
+                            return f"{t('removed', lang, name=drink.name)}\n{self._render_order(state)}"
+                    return f"{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
+
         # --- LLM intent classification + routing ---
         if self._llm.available:
+            order_context = ", ".join(f"{i.quantity}x {i.drink.name}" for i in state.order) if state.order else "empty"
             reply, detected_lang, intent, drink_name = await self._llm.chat(
-                message, state.conversation_history, user_name=state.user_name, lang_hint=lang
+                message,
+                state.conversation_history,
+                user_name=state.user_name,
+                lang_hint=lang,
+                current_order=order_context,
             )
-            if reply:
+            if reply or intent:
                 if detected_lang:
                     state.lang_hint = detected_lang
                     lang = detected_lang
