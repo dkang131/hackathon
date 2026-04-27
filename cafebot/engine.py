@@ -268,6 +268,19 @@ class CafeBotEngine:
             state.last_recommended = None
             return "No problem! Let me know if you want something else."
 
+        # --- lightweight pre-LLM fallback for obvious order commands ---
+        ordered = self._try_parse_order(message)
+        if ordered:
+            # Only auto-order if it looks like a request, not a question or complaint
+            is_question = "?" in message or any(kw in lower for kw in ["what is", "what's", "how is", "how are", "bagaimana", "berapa", "apa itu", "do you have", "is there", "can you make", "why", "kenapa"])
+            has_order_intent = any(kw in lower for kw in ["want", "get", "try", "have", "like", "thinking", "go with", "sounds good", "add", "order", "please", "do", "get me", "ill have", "i'll have", "can i", "could i", "may i", "give me", "mau", "pesan", "boleh", "iya", "ya", "gas", "about", "let's", "lets", "pick", "choose", "go for", "feeling like", "craving"])
+            if not is_question and has_order_intent:
+                drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
+                if drink:
+                    state.order.append(OrderItem(drink))
+                    state.last_recommended = None
+                    return f"{t('confirmation', lang)}\n{self._render_order(state)}"
+
         # --- LLM intent classification + routing ---
         if self._llm.available:
             order_context = ", ".join(f"{i.quantity}x {i.drink.name}" for i in state.order) if state.order else "empty"
