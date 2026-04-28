@@ -234,10 +234,10 @@ class CafeBotEngine:
         status_lines = [
             "CafeMate is online!",
             f"User: {user_name}" if user_name else "",
-            f"Azure OpenAI: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
+            # f"Azure OpenAI: {'Connected' if self._llm.available else 'Offline (English fallback)'}",
             f"Menu items: {len(DRINK_MENU)}",
             "Available Languages: Indonesian, Chinese, Japanese, Korean, English, Spanish",
-            "",
+            "\n",
         ]
         if self._llm.available:
             greet_prompt = (
