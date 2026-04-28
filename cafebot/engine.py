@@ -215,6 +215,12 @@ class CafeBotEngine:
         state = self._get_state(user_id)
         if name:
             state.user_name = name
+
+        # Check for session timeout before processing
+        if self._maybe_reset(user_id):
+            return t("session_timeout", state.lang_hint)
+
+        self._update_activity(user_id)
         user_name = state.user_name
         status_lines = [
             "CafeMate is online!",
