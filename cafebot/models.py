@@ -48,3 +48,9 @@ class UserState:
 
     # Language hint for localized order forms
     lang_hint: str = "en"
+
+    # UI: whether to show Add Another / Checkout buttons on next response
+    show_action_buttons: bool = False
+
+    # Last activity timestamp for session timeout
+    last_activity: float = 0.0

@@ -1,6 +1,7 @@
 """Core async chatbot engine — user-stateful, Azure-backed."""
 
 import random
+import time
 from datetime import datetime
 
 from .models import Drink, OrderItem, UserState
@@ -105,6 +106,31 @@ class CafeBotEngine:
 
     def _clear_user(self, user_id: str) -> None:
         self._users.pop(user_id, None)
+
+    # ---------- session timeout ----------
+
+    TIMEOUT_SECONDS = 60
+
+    def _update_activity(self, user_id: str) -> None:
+        self._get_state(user_id).last_activity = time.time()
+
+    def _reset_state(self, user_id: str) -> None:
+        state = self._get_state(user_id)
+        preserved_name = state.user_name
+        preserved_lang = state.lang_hint
+        self._users[user_id] = UserState(user_id=user_id, user_name=preserved_name, lang_hint=preserved_lang)
+
+    def _maybe_reset(self, user_id: str) -> bool:
+        state = self._get_state(user_id)
+        if state.last_activity == 0:
+            return False
+        elapsed = time.time() - state.last_activity
+        if elapsed > self.TIMEOUT_SECONDS:
+            # Only reset if order is empty and not awaiting feedback (flow completed)
+            if not state.order and not state.awaiting_feedback:
+                self._reset_state(user_id)
+                return True
+        return False
 
     # ---------- helpers ----------
 
@@ -223,9 +249,15 @@ class CafeBotEngine:
 
     async def chat(self, user_id: str, message: str, name: str | None = None) -> str:
         """Main entry — returns the bot's reply for the given user & message."""
+        # Check for session timeout before processing
+        self._maybe_reset(user_id)
+
         state = self._get_state(user_id)
         if name:
             state.user_name = name
+
+        # Update activity timestamp
+        self._update_activity(user_id)
 
         # Detect and cache user language from their message
         detected = detect_language_simple(message)
@@ -263,6 +295,7 @@ class CafeBotEngine:
                         if item.drink.name.lower() == drink.name.lower():
                             state.order.pop(i)
                             state.last_recommended = None
+                            state.show_action_buttons = True
                             return f"{t('removed', lang, name=drink.name)}\n{self._render_order(state)}"
                     return f"{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
             state.last_recommended = None
@@ -271,14 +304,16 @@ class CafeBotEngine:
         # --- lightweight pre-LLM fallback for obvious order commands ---
         ordered = self._try_parse_order(message)
         if ordered:
-            # Only auto-order if it looks like a request, not a question or complaint
+            # Only auto-order if it looks like a simple request, not a question or constraint
             is_question = "?" in message or any(kw in lower for kw in ["what is", "what's", "how is", "how are", "bagaimana", "berapa", "apa itu", "do you have", "is there", "can you make", "why", "kenapa"])
             has_order_intent = any(kw in lower for kw in ["want", "get", "try", "have", "like", "thinking", "go with", "sounds good", "add", "order", "please", "do", "get me", "ill have", "i'll have", "can i", "could i", "may i", "give me", "mau", "pesan", "boleh", "iya", "ya", "gas", "about", "let's", "lets", "pick", "choose", "go for", "feeling like", "craving"])
-            if not is_question and has_order_intent:
+            has_constraint = any(kw in lower for kw in ["only", "just", "instead", "not", "don't", "dont", "no", "tidak", "bukan", "ga", "nggak", "remove", "delete", "cancel", "skip", "batal", "hapus", "ilangkan", "kurangi", "kurang", "change", "ganti", "ubah"])
+            if not is_question and has_order_intent and not has_constraint:
                 drink = next((d for d in DRINK_MENU if d.name.lower() == ordered.lower()), None)
                 if drink:
                     state.order.append(OrderItem(drink))
                     state.last_recommended = None
+                    state.show_action_buttons = True
                     return f"{t('confirmation', lang)}\n{self._render_order(state)}"
 
         # --- LLM intent classification + routing ---
@@ -303,6 +338,7 @@ class CafeBotEngine:
                 if intent == "agree" and state.last_recommended:
                     state.order.append(OrderItem(state.last_recommended))
                     state.last_recommended = None
+                    state.show_action_buttons = True
                     return f"{reply}\n\n{self._render_order(state)}\n"
 
                 if intent == "order":
@@ -312,7 +348,9 @@ class CafeBotEngine:
                         if drink:
                             state.order.append(OrderItem(drink))
                             state.last_recommended = None
+                            state.show_action_buttons = True
                             return f"{reply}\n\n{self._render_order(state)}\n"
+                    state.show_action_buttons = False
                     return reply
 
                 if intent == "remove":
@@ -323,21 +361,28 @@ class CafeBotEngine:
                             for i, item in enumerate(state.order):
                                 if item.drink.name.lower() == drink.name.lower():
                                     state.order.pop(i)
+                                    state.show_action_buttons = True
                                     return f"{reply}\n\n{self._render_order(state)}\n"
+                            state.show_action_buttons = True
                             return f"{reply}\n\n{t('not_in_order', lang, name=drink.name)}\n{self._render_order(state)}"
+                    state.show_action_buttons = False
                     return reply
 
                 if intent == "show_menu":
+                    state.show_action_buttons = False
                     return reply  # LLM generates conversational menu response
 
                 if intent == "show_order":
+                    state.show_action_buttons = False
                     return f"{reply}\n\n{self._render_order(state)}"
 
                 if intent == "checkout":
+                    state.show_action_buttons = False
                     return await self._checkout(user_id)
 
                 # Default / chat intent — set last_recommended if LLM mentions a drink
                 # but only if user isn't clearly trying to remove, checkout, or see menu
+                state.show_action_buttons = False
                 if not any(kw in lower for kw in ["remove", "ilangkan", "hapus", "delete", "batal", "batalin", "kurangi", "kurang", "cancel", "skip", "don't want", "dont want", "tidak mau", "ga mau", "nggak mau", "checkout", "pay", "done", "finish", "menu", "what do you have", "what's available", "my order"]):
                     for drink in DRINK_MENU:
                         if drink.name.lower() in reply.lower():
@@ -425,13 +470,15 @@ class CafeBotEngine:
 
     async def checkout(self, user_id: str) -> str:
         """Public wrapper to trigger checkout for a user."""
+        self._update_activity(user_id)
         return await self._checkout(user_id)
 
     def get_order_action_buttons(self, user_id: str) -> dict | None:
         """Return Add Another / Checkout buttons if user has items and isn't in checkout flow."""
         state = self._get_state(user_id)
         lang = state.lang_hint
-        if state.order and state.checkout_state is None and not state.last_recommended:
+        if state.show_action_buttons and state.order and state.checkout_state is None and not state.last_recommended:
+            state.show_action_buttons = False
             return {
                 "inline_keyboard": [
                     [
@@ -444,6 +491,7 @@ class CafeBotEngine:
 
     def confirm_qr_payment(self, user_id: str) -> str:
         """Confirm QR payment scan and move to order_placed state."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         lang = state.lang_hint
         if state.checkout_state != "awaiting_qr_scan":
@@ -453,6 +501,7 @@ class CafeBotEngine:
 
     def confirm_va_payment(self, user_id: str) -> str:
         """Confirm VA payment transfer and move to order_placed state."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         lang = state.lang_hint
         if state.checkout_state != "awaiting_va_transfer":
@@ -502,6 +551,7 @@ class CafeBotEngine:
 
     def confirm_pickup(self, user_id: str) -> str:
         """Mark order as picked up and clear state."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         lang = state.lang_hint
         state.order = []
@@ -514,6 +564,7 @@ class CafeBotEngine:
 
     def save_rating(self, user_id: str, rating: int) -> str:
         """Save user rating to persistent JSON storage and prompt for optional comment."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         lang = state.lang_hint
         state.feedback_rating = rating
@@ -645,6 +696,7 @@ class CafeBotEngine:
 
     def admin_start_add_wizard(self, user_id: str) -> str:
         """Start the conversational add-drink wizard."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         state.admin_wizard = "add_drink"
         state.admin_wizard_data = {}
@@ -656,6 +708,7 @@ class CafeBotEngine:
 
     def admin_cancel_wizard(self, user_id: str) -> str:
         """Cancel any active wizard."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         state.admin_wizard = None
         state.admin_wizard_data = {}
@@ -663,6 +716,7 @@ class CafeBotEngine:
 
     def handle_admin_wizard(self, user_id: str, message: str) -> str | None:
         """Handle a wizard step. Returns reply if in wizard, None otherwise."""
+        self._update_activity(user_id)
         state = self._get_state(user_id)
         if state.admin_wizard != "add_drink":
             return None
