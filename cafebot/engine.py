@@ -132,6 +132,19 @@ class CafeBotEngine:
                 return True
         return False
 
+    def check_and_reset_timeout(self, user_id: str) -> str | None:
+        """Check if user has timed out. If so, reset state and return timeout message."""
+        state = self._get_state(user_id)
+        if state.last_activity == 0:
+            return None
+        elapsed = time.time() - state.last_activity
+        if elapsed > self.TIMEOUT_SECONDS:
+            if not state.order and not state.awaiting_feedback:
+                lang = state.lang_hint
+                self._reset_state(user_id)
+                return t("session_timeout", lang)
+        return None
+
     # ---------- helpers ----------
 
     @staticmethod
@@ -216,10 +229,6 @@ class CafeBotEngine:
         if name:
             state.user_name = name
 
-        # Check for session timeout before processing
-        if self._maybe_reset(user_id):
-            return t("session_timeout", state.lang_hint)
-
         self._update_activity(user_id)
         user_name = state.user_name
         status_lines = [
@@ -258,10 +267,6 @@ class CafeBotEngine:
         state = self._get_state(user_id)
         if name:
             state.user_name = name
-
-        # Check for session timeout before processing
-        if self._maybe_reset(user_id):
-            return t("session_timeout", state.lang_hint)
 
         # Update activity timestamp
         self._update_activity(user_id)

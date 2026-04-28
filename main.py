@@ -19,6 +19,29 @@ from cafebot.i18n import t
 app = FastAPI(title="CafeMate", version="0.2.0")
 engine = CafeBotEngine()
 
+# Per-user pending timeout tasks for proactive session timeout
+_pending_timeout_tasks: dict[str, asyncio.Task] = {}
+
+
+def _cancel_timeout(user_id: str) -> None:
+    """Cancel any pending timeout task for a user."""
+    task = _pending_timeout_tasks.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+def _schedule_timeout(user_id: str, chat_id: int) -> None:
+    """Schedule a new 60-second timeout task for a user."""
+    _cancel_timeout(user_id)
+
+    async def _timeout_task() -> None:
+        await asyncio.sleep(60)
+        timeout_msg = engine.check_and_reset_timeout(user_id)
+        if timeout_msg:
+            await _send_telegram_message(chat_id, timeout_msg)
+
+    _pending_timeout_tasks[user_id] = asyncio.create_task(_timeout_task())
+
 
 @app.get("/health")
 async def health() -> dict:
@@ -106,6 +129,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             return JSONResponse({"ok": True})
         chat_id = callback_msg["chat"]["id"]
 
+        # Cancel any pending timeout since user is active
+        _cancel_timeout(user_id)
+
         # Answer callback to remove loading spinner
         import httpx
         answer_url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/answerCallbackQuery"
@@ -167,6 +193,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
                     ]
                 }
                 asyncio.create_task(_send_telegram_message(user_chat, reply, reply_markup=pickup_markup))
+                _schedule_timeout(customer_id, user_chat)
         elif callback_data.startswith("order_add:"):
             lang = engine._get_lang(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, t("add_prompt", lang)))
@@ -191,6 +218,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         # Remove buttons from the original message to prevent double-presses
         message_id = callback_msg["message_id"]
         asyncio.create_task(_edit_telegram_remove_buttons(chat_id, message_id))
+        _schedule_timeout(user_id, chat_id)
         return JSONResponse({"ok": True})
 
     # Extract message
@@ -207,10 +235,14 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     if not text:
         return JSONResponse({"ok": True})
 
+    # Cancel any pending timeout since user is active
+    _cancel_timeout(user_id)
+
     # Check if user is in an admin wizard first
     wizard_reply = engine.handle_admin_wizard(user_id, text)
     if wizard_reply:
         asyncio.create_task(_send_telegram_message(chat_id, wizard_reply))
+        _schedule_timeout(user_id, chat_id)
         return JSONResponse({"ok": True})
 
     is_start = text.lower() == "/start"
@@ -298,6 +330,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     if engine.get_checkout_state(user_id) == "order_placed" and settings.kitchen_group_id:
         asyncio.create_task(_send_kitchen_notification(user_id))
 
+    _schedule_timeout(user_id, chat_id)
     return JSONResponse({"ok": True})
 
 
