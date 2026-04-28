@@ -310,6 +310,14 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "ko": "뭘 추가할까?",
         "es": "¿Qué te gustaría agregar?",
     },
+    "session_timeout": {
+        "en": "Your session has timed out after 60 seconds of inactivity. Please type /start to begin again.",
+        "id": "Sesi kamu telah berakhir setelah 60 detik tidak aktif. Ketik /start untuk memulai lagi.",
+        "zh": "您的会话因60秒无操作已超时。请输入 /start 重新开始。",
+        "ja": "60秒間操作がなかったため、セッションがタイムアウトしました。もう一度 /start と入力してください。",
+        "ko": "60초 동안 활동이 없어 세션이 만료되었어. 다시 /start 를 입력해줘.",
+        "es": "Tu sesión ha expirado tras 60 segundos de inactividad. Escribe /start para comenzar de nuevo.",
+    },
 }
 
 

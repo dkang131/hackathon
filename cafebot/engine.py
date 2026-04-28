@@ -249,12 +249,13 @@ class CafeBotEngine:
 
     async def chat(self, user_id: str, message: str, name: str | None = None) -> str:
         """Main entry — returns the bot's reply for the given user & message."""
-        # Check for session timeout before processing
-        self._maybe_reset(user_id)
-
         state = self._get_state(user_id)
         if name:
             state.user_name = name
+
+        # Check for session timeout before processing
+        if self._maybe_reset(user_id):
+            return t("session_timeout", state.lang_hint)
 
         # Update activity timestamp
         self._update_activity(user_id)
