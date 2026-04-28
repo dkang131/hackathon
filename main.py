@@ -196,7 +196,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
                 _schedule_timeout(customer_id, user_chat)
         elif callback_data.startswith("order_add:"):
             lang = engine._get_lang(user_id)
-            asyncio.create_task(_send_telegram_message(chat_id, t("add_prompt", lang)))
+            menu_text = engine._render_menu(lang)
+            reply = f"{t('add_prompt', lang)}\n\n{menu_text}"
+            asyncio.create_task(_send_telegram_message(chat_id, reply))
         elif callback_data.startswith("order_checkout:"):
             reply = await engine.checkout(user_id)
             asyncio.create_task(_send_telegram_message(chat_id, reply))
